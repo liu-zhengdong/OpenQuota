@@ -31,10 +31,12 @@ use std::sync::Arc;
 use popup::PopupDismissGuard;
 use service::ProviderService;
 use settings::{CredentialDetectionPlan, SettingsService};
+#[cfg(target_os = "macos")]
+use tauri::menu::ContextMenu;
 #[cfg(not(target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::{
-    menu::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     App, AppHandle, Emitter, Manager,
 };
