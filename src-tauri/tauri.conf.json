@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenQuota",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "identifier": "io.github.deviffyy.openquota",
   "build": {
     "beforeDevCommand": "corepack pnpm dev",
@@ -60,8 +60,10 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1MDJGRUM1QUY2QzgyRDQKUldUVWdteXZ4ZjRDUlFveldMMVAzOHNqcnhJNkdzVVo5YXpnSU5ZWk4zR3VkRUFTQVY3VWV6REgK",
-      "endpoints": ["https://github.com/deviffyy/OpenQuota/releases/latest/download/latest.json"]
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxRTg2M0EwM0E0QkVBN0EKUldSNjZrczZvR1BvUWViVUxnTW1sdGJRVlh6NWtGSnBFVHdTbFM5cUF6QzFJSkU2UU9Na0VRUlMK",
+      "endpoints": [
+        "https://github.com/liu-zhengdong/OpenQuota/releases/latest/download/latest.json"
+      ]
     }
   }
 }

@@ -28,7 +28,7 @@ describe('native UI language contract', () => {
     expect(css).toMatch(/\.metric__heading \.pace-warning\s*{[^}]*color: var\(--secondary\);/s);
   });
 
-  it('keeps spend providers visually distinct in both appearances', () => {
+  it('keeps providers visually distinct in both appearances', () => {
     for (const provider of ['claude', 'codex', 'cursor', 'grok', 'opencode', 'openrouter']) {
       expect(tokensCss).toContain(`--provider-${provider}:`);
     }
@@ -58,7 +58,6 @@ describe('native UI language contract', () => {
   it('uses the shared Settings labels and single-line control rows', () => {
     for (const label of [
       'General',
-      'Show Total Spend',
       'Launch at Login',
       'Global Shortcut',
       'Icon Style',

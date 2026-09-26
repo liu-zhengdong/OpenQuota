@@ -1,11 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::{
-    models::{MetricValue, MetricValueKind, QuotaFormat, QuotaWindow, UsageHistory, ValueMetric},
-    pricing::ModelPricing,
-    providers::{cursor::csv::CursorCsvRow, daily_usage::DailyUsageAccumulator},
-};
+use crate::models::{MetricValue, MetricValueKind, QuotaFormat, QuotaWindow, ValueMetric};
 
 use super::CursorError;
 
@@ -491,31 +487,6 @@ pub fn stripe_balance_cents(response: Option<&Value>) -> f64 {
         .unwrap_or_default()
 }
 
-pub fn usage_history(
-    rows: &[CursorCsvRow],
-    now: DateTime<Utc>,
-    pricing: &ModelPricing,
-) -> UsageHistory {
-    let mut accumulator = DailyUsageAccumulator::default();
-    for row in rows {
-        let date = row.date.with_timezone(&chrono::Local).date_naive();
-        let tokens = row.tokens.total_tokens();
-        match row.estimated_cost_usd {
-            Some(cost) => {
-                let family = if row.model.trim().is_empty() {
-                    "Unattributed".to_owned()
-                } else {
-                    pricing.display_family(row.model.trim())
-                };
-                accumulator.add_variant(date, tokens, cost, &family, row.model.trim());
-            }
-            None if tokens > 0 => accumulator.add_unknown_model(date, &row.model),
-            None => {}
-        }
-    }
-    accumulator.build(now, "From your Cursor usage export")
-}
-
 fn quota(
     id: &str,
     label: &str,
@@ -666,12 +637,8 @@ fn number(value: &Value) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
 
-    use chrono::TimeZone;
     use serde_json::json;
-
-    use crate::pricing::{PricingCatalog, PricingSupplement, TokenBreakdown};
 
     use super::*;
 
@@ -817,80 +784,5 @@ mod tests {
         let team = json!({"enabled":true,"planUsage":{},"spendLimitUsage":{"pooledLimit":100}});
         assert!(request_fallback(&team, Some("business"), false).is_some());
         assert!(PlanUsageFacts::new(&unusable).should_try_generic_request_fallback());
-    }
-
-    #[test]
-    fn csv_history_groups_cursor_variants_and_scopes_unknown_models() {
-        let supplement = PricingSupplement::decode(
-            br#"{
-              "pricing":{"claude-opus-4-8":{"input_per_million":1,"output_per_million":2}},
-              "alias_rules":[
-                {"pattern":"^claude-opus-4-8-thinking-(?:max|high)$","canonical":"claude-opus-4-8"}
-              ]
-            }"#,
-        )
-        .unwrap();
-        let pricing = ModelPricing::new(
-            supplement,
-            PricingCatalog {
-                entries: HashMap::new(),
-                retrieved_at: None,
-            },
-            PricingCatalog::default(),
-        );
-        let now = Utc.with_ymd_and_hms(2026, 7, 15, 12, 0, 0).unwrap();
-        let rows = vec![
-            CursorCsvRow {
-                date: now,
-                model: "claude-opus-4-8-thinking-max".into(),
-                tokens: TokenBreakdown {
-                    input: 300,
-                    ..TokenBreakdown::default()
-                },
-                estimated_cost_usd: Some(3.004),
-            },
-            CursorCsvRow {
-                date: now,
-                model: "claude-opus-4-8-thinking-high".into(),
-                tokens: TokenBreakdown {
-                    input: 100,
-                    ..TokenBreakdown::default()
-                },
-                estimated_cost_usd: Some(1.006),
-            },
-            CursorCsvRow {
-                date: now,
-                model: "unknown-cursor-model".into(),
-                tokens: TokenBreakdown {
-                    input: 50,
-                    ..TokenBreakdown::default()
-                },
-                estimated_cost_usd: None,
-            },
-        ];
-
-        let history = usage_history(&rows, now, &pricing);
-        let today = history.today.unwrap();
-        assert_eq!(
-            today.tokens, 400,
-            "unpriced tokens stay out of coherent totals"
-        );
-        assert_eq!(today.estimated_cost_usd, Some(4.01));
-        assert_eq!(today.unknown_models, ["unknown-cursor-model"]);
-        let models = today.model_breakdown.unwrap().models;
-        assert_eq!(models[0].model, "claude-opus-4-8");
-        assert_eq!(
-            models[0]
-                .variants
-                .as_ref()
-                .unwrap()
-                .iter()
-                .map(|variant| variant.model.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "claude-opus-4-8-thinking-max",
-                "claude-opus-4-8-thinking-high"
-            ]
-        );
     }
 }

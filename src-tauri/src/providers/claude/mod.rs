@@ -1,13 +1,9 @@
 mod accounts;
 pub mod auth;
 mod client;
-mod local_usage;
 mod mapper;
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
 use reqwest::StatusCode;
@@ -16,9 +12,8 @@ use thiserror::Error;
 use crate::{
     models::{
         MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderNotice,
-        ProviderNoticeTone, ProviderSnapshot, UsagePeriodSelection,
+        ProviderNoticeTone, ProviderSnapshot,
     },
-    pricing::{ModelPricing, PricingStore},
     storage::Storage,
 };
 
@@ -32,7 +27,7 @@ fn definition_for(id: &str, display_name: &str, fallback_enabled: bool) -> Provi
         display_name: display_name.into(),
         short_name: "Cl".into(),
         fallback_enabled,
-        local_usage_source_note: Some("From your Claude usage history (estimated)".into()),
+        scoped_quota_prefix: Some("scoped-".into()),
         links: vec![
             ProviderLink::new("Status", "https://status.anthropic.com/"),
             ProviderLink::new("Dashboard", "https://claude.ai/settings/usage"),
@@ -68,16 +63,7 @@ fn definition_for(id: &str, display_name: &str, fallback_enabled: bool) -> Provi
                 false,
                 "Sn",
             ),
-            MetricDefinition::quota(
-                "claude.fable",
-                "Fable",
-                "fable",
-                false,
-                false,
-                MetricSection::OnDemand,
-                false,
-                "F",
-            ),
+            scoped_metric("claude", "fable", "Fable"),
             MetricDefinition::quota_or_value(
                 "claude.extra",
                 "Extra Usage",
@@ -86,28 +72,6 @@ fn definition_for(id: &str, display_name: &str, fallback_enabled: bool) -> Provi
                 MetricSection::AlwaysVisible,
                 false,
                 "E",
-            ),
-            MetricDefinition::trend("claude.trend"),
-            MetricDefinition::usage(
-                "claude.today",
-                "Today",
-                UsagePeriodSelection::Today,
-                MetricSection::OnDemand,
-                "T",
-            ),
-            MetricDefinition::usage(
-                "claude.yesterday",
-                "Yesterday",
-                UsagePeriodSelection::Yesterday,
-                MetricSection::OnDemand,
-                "Y",
-            ),
-            MetricDefinition::usage(
-                "claude.last30",
-                "Last 30 Days",
-                UsagePeriodSelection::Last30Days,
-                MetricSection::OnDemand,
-                "M",
             ),
         ],
     };
@@ -123,16 +87,33 @@ fn definition_for(id: &str, display_name: &str, fallback_enabled: bool) -> Provi
     definition
 }
 
+// Model windows are supplied by the API, while the legacy Fable row keeps its saved layout.
+pub(crate) fn scoped_metric(provider_id: &str, id: &str, label: &str) -> MetricDefinition {
+    let legacy = id == "fable";
+    MetricDefinition::quota(
+        &format!("{provider_id}.{id}"),
+        label,
+        id,
+        false,
+        !legacy,
+        if legacy {
+            MetricSection::OnDemand
+        } else {
+            MetricSection::AlwaysVisible
+        },
+        false,
+        if legacy { "F" } else { label },
+    )
+}
+
 use self::{
     auth::{
         load_candidates, oauth_config, ClaudeCredential, ClaudeCredentialGeneration,
         ClaudeCredentialScope,
     },
     client::ClaudeClient,
-    local_usage::scan_local_usage,
     mapper::map_usage,
 };
-use crate::providers::log_usage::scan_or_cached_usage;
 
 #[derive(Debug, Error)]
 pub enum ClaudeError {
@@ -160,8 +141,6 @@ pub enum ClaudeError {
     InvalidResponse,
     #[error("Could not connect to Claude. Check your internet connection.")]
     ConnectionFailed,
-    #[error("Local Claude usage logs could not be processed.")]
-    LocalUsage,
     #[error("Claude account settings could not be loaded.")]
     AccountStore(#[from] crate::storage::StorageError),
 }
@@ -170,11 +149,6 @@ pub struct ClaudeProvider {
     definition: ProviderDefinition,
     credential_scope: ClaudeCredentialScope,
     account_identity: Option<String>,
-    log_roots: Vec<PathBuf>,
-    include_standard_logs: bool,
-    include_pi: bool,
-    storage: Arc<Storage>,
-    pricing: Arc<PricingStore>,
     client: ClaudeClient,
     cached_credential_fingerprint: Mutex<Option<[u8; 32]>>,
     last_good: Mutex<Option<ProviderSnapshot>>,
@@ -185,26 +159,18 @@ struct ClaudeRuntimeConfig {
     definition: ProviderDefinition,
     credential_scope: ClaudeCredentialScope,
     account_identity: Option<String>,
-    log_roots: Vec<PathBuf>,
-    include_standard_logs: bool,
-    include_pi: bool,
 }
 
 pub(crate) fn runtimes(
     storage: Arc<Storage>,
-    pricing: Arc<PricingStore>,
 ) -> Result<Vec<Arc<dyn crate::providers::UsageProvider>>, ClaudeError> {
     let discovery = accounts::discover(&storage)?;
     let client = ClaudeClient::new()?;
     Ok(runtime_configs(discovery)
         .into_iter()
         .map(|config| {
-            Arc::new(ClaudeProvider::new_scoped(
-                config,
-                storage.clone(),
-                pricing.clone(),
-                client.clone(),
-            )) as Arc<dyn crate::providers::UsageProvider>
+            Arc::new(ClaudeProvider::new_scoped(config, client.clone()))
+                as Arc<dyn crate::providers::UsageProvider>
         })
         .collect())
 }
@@ -222,18 +188,12 @@ fn runtime_configs(discovery: accounts::ClaudeAccountDiscovery) -> Vec<ClaudeRun
             definition: definition_for(&account.id, &account.display_name, true),
             credential_scope: ClaudeCredentialScope::Standard,
             account_identity: Some(account.identity),
-            log_roots: account.log_roots,
-            include_standard_logs: true,
-            include_pi: true,
         });
     } else if !has_bare_scoped_account {
         configs.push(ClaudeRuntimeConfig {
             definition: definition(),
             credential_scope: ClaudeCredentialScope::Standard,
             account_identity: None,
-            log_roots: Vec::new(),
-            include_standard_logs: true,
-            include_pi: true,
         });
     }
     for account in discovery.accounts {
@@ -241,9 +201,6 @@ fn runtime_configs(discovery: accounts::ClaudeAccountDiscovery) -> Vec<ClaudeRun
             definition: definition_for(&account.id, &account.display_name, false),
             credential_scope: account.credential_scope,
             account_identity: Some(account.identity),
-            log_roots: account.log_roots,
-            include_standard_logs: false,
-            include_pi: false,
         });
     }
     configs
@@ -251,37 +208,22 @@ fn runtime_configs(discovery: accounts::ClaudeAccountDiscovery) -> Vec<ClaudeRun
 
 impl ClaudeProvider {
     #[cfg(test)]
-    pub fn new(storage: Arc<Storage>, pricing: Arc<PricingStore>) -> Result<Self, ClaudeError> {
+    fn new() -> Result<Self, ClaudeError> {
         Ok(Self::new_scoped(
             ClaudeRuntimeConfig {
                 definition: definition(),
                 credential_scope: ClaudeCredentialScope::Standard,
                 account_identity: None,
-                log_roots: Vec::new(),
-                include_standard_logs: true,
-                include_pi: true,
             },
-            storage,
-            pricing,
             ClaudeClient::new()?,
         ))
     }
 
-    fn new_scoped(
-        config: ClaudeRuntimeConfig,
-        storage: Arc<Storage>,
-        pricing: Arc<PricingStore>,
-        client: ClaudeClient,
-    ) -> Self {
+    fn new_scoped(config: ClaudeRuntimeConfig, client: ClaudeClient) -> Self {
         Self {
             definition: config.definition,
             credential_scope: config.credential_scope,
             account_identity: config.account_identity,
-            log_roots: config.log_roots,
-            include_standard_logs: config.include_standard_logs,
-            include_pi: config.include_pi,
-            storage,
-            pricing,
             client,
             cached_credential_fingerprint: Mutex::new(None),
             last_good: Mutex::new(None),
@@ -345,17 +287,10 @@ impl ClaudeProvider {
             candidates.len()
         );
         let now = Utc::now();
-        let pricing = self.pricing.current();
         let mut credential_generation = ClaudeCredentialGeneration::from_candidates(&candidates);
         let mut last_auth_error = None;
         for mut credential in candidates {
-            match self.refresh_candidate(
-                &mut credential,
-                config,
-                now,
-                &pricing,
-                &mut credential_generation,
-            ) {
+            match self.refresh_candidate(&mut credential, config, now, &mut credential_generation) {
                 Ok(snapshot) => return Ok(snapshot),
                 Err(error @ (ClaudeError::SessionExpired | ClaudeError::TokenExpired)) => {
                     last_auth_error = Some(error);
@@ -380,28 +315,9 @@ impl ClaudeProvider {
         credential: &mut ClaudeCredential,
         config: &auth::ClaudeOAuthConfig,
         now: chrono::DateTime<Utc>,
-        pricing: &ModelPricing,
         credential_generation: &mut ClaudeCredentialGeneration,
     ) -> Result<ProviderSnapshot, ClaudeError> {
         let mut warnings = Vec::new();
-        let usage = scan_or_cached_usage(
-            &self.storage,
-            self.provider_id(),
-            crate::providers::UsageProvider::cache_identity(self),
-            "Claude",
-            || {
-                scan_local_usage(
-                    &self.storage,
-                    now,
-                    pricing,
-                    self.provider_id(),
-                    &self.log_roots,
-                    self.include_standard_logs,
-                    self.include_pi,
-                )
-            },
-            &mut warnings,
-        );
 
         if credential.inference_only {
             return Ok(ProviderSnapshot {
@@ -411,7 +327,7 @@ impl ClaudeProvider {
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
                 notices: Vec::new(),
-                usage,
+
                 warnings,
                 refreshed_at: now,
             });
@@ -428,7 +344,7 @@ impl ClaudeProvider {
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
                 notices: Vec::new(),
-                usage,
+
                 warnings,
                 refreshed_at: now,
             });
@@ -457,7 +373,6 @@ impl ClaudeProvider {
         if let Some(until) = cooldown_until {
             let retry = until.signed_duration_since(now).num_seconds().max(0) as u64;
             if let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) {
-                snapshot.usage = usage;
                 snapshot.warnings.push(
                     "Claude live usage is rate limited; showing the last successful limits.".into(),
                 );
@@ -476,7 +391,7 @@ impl ClaudeProvider {
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
                 notices: vec![rate_limit_notice(retry, false)],
-                usage,
+
                 warnings,
                 refreshed_at: now,
             });
@@ -508,7 +423,6 @@ impl ClaudeProvider {
                 *until = Some(now + Duration::seconds(retry as i64));
             }
             if let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) {
-                snapshot.usage = usage;
                 snapshot.warnings.push(format!(
                     "Claude live usage is rate limited; retrying in about {}.",
                     retry_minutes(retry)
@@ -528,12 +442,12 @@ impl ClaudeProvider {
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
                 notices: vec![rate_limit_notice(retry, false)],
-                usage,
+
                 warnings,
                 refreshed_at: now,
             });
         }
-        self.build_snapshot(status, &body, credential, usage, warnings, now)
+        self.build_snapshot(status, &body, credential, warnings, now)
     }
 
     fn build_snapshot(
@@ -541,7 +455,6 @@ impl ClaudeProvider {
         status: StatusCode,
         body: &serde_json::Value,
         credential: &ClaudeCredential,
-        usage: crate::models::UsageHistory,
         warnings: Vec<String>,
         now: chrono::DateTime<Utc>,
     ) -> Result<ProviderSnapshot, ClaudeError> {
@@ -553,7 +466,7 @@ impl ClaudeProvider {
             value_metrics: mapped.value_metrics,
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage,
+
             warnings,
             refreshed_at: now,
         };
@@ -721,7 +634,6 @@ impl crate::providers::UsageProvider for ClaudeProvider {
                 ClaudeError::AuthWrite => Kind::CredentialStorage,
                 ClaudeError::RequestFailed(429) => Kind::RateLimited,
                 ClaudeError::RequestFailed(_) | ClaudeError::ConnectionFailed => Kind::Network,
-                ClaudeError::LocalUsage => Kind::LocalData,
                 ClaudeError::AccountStore(_) => Kind::Internal,
             };
             crate::providers::ProviderError::from_display(kind, error)
@@ -743,11 +655,7 @@ mod tests {
     use chrono::{Duration, Utc};
     use tempfile::tempdir;
 
-    use crate::{
-        models::{ProviderNoticeTone, ProviderSnapshot, UsageHistory},
-        pricing::PricingStore,
-        storage::Storage,
-    };
+    use crate::models::{ProviderNoticeTone, ProviderSnapshot};
 
     use super::{
         accounts::{self, ClaudeAccount, ClaudeAccountDiscovery},
@@ -805,7 +713,6 @@ mod tests {
                     path: "account-a".into(),
                     keychain_literal: "account-a".into(),
                 },
-                log_roots: vec!["account-a".into()],
             }],
         });
 
@@ -815,8 +722,6 @@ mod tests {
             &configs[0].credential_scope,
             ClaudeCredentialScope::ConfigDir { .. }
         ));
-        assert!(!configs[0].include_standard_logs);
-        assert!(!configs[0].include_pi);
     }
 
     #[test]
@@ -828,7 +733,6 @@ mod tests {
                 label: Some("Work".into()),
                 identity: "identity-b".into(),
                 credential_scope: ClaudeCredentialScope::Standard,
-                log_roots: Vec::new(),
             }),
             accounts: vec![ClaudeAccount {
                 id: "claude".into(),
@@ -839,7 +743,6 @@ mod tests {
                     path: "account-a".into(),
                     keychain_literal: "account-a".into(),
                 },
-                log_roots: vec!["account-a".into()],
             }],
         });
 
@@ -876,10 +779,7 @@ mod tests {
 
     #[test]
     fn account_change_clears_live_usage_and_rate_limit_cache() {
-        let directory = tempdir().unwrap();
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
-        let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
-        let provider = ClaudeProvider::new(storage, pricing).unwrap();
+        let provider = ClaudeProvider::new().unwrap();
         let snapshot = ProviderSnapshot {
             provider_id: "claude".into(),
             plan: None,
@@ -887,7 +787,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
@@ -943,8 +842,6 @@ mod tests {
             authorization
         });
 
-        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
-        let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
         let credential_scope = ClaudeCredentialScope::ConfigDir {
             path: account_root.clone(),
             keychain_literal: account_root.to_string_lossy().into_owned(),
@@ -954,12 +851,7 @@ mod tests {
                 definition: definition(),
                 account_identity: accounts::identity_for_scope(&credential_scope),
                 credential_scope,
-                log_roots: vec![account_root],
-                include_standard_logs: false,
-                include_pi: false,
             },
-            storage,
-            pricing,
             ClaudeClient::new().unwrap(),
         ));
         let config = ClaudeOAuthConfig {

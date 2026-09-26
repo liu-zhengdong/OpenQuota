@@ -48,20 +48,54 @@ pub fn map_usage(
         7 * 24 * 60 * 60,
     );
     if let Some(limits) = object.get("limits").and_then(Value::as_array) {
-        if let Some(limit) = limits.iter().find(|limit| {
-            limit.get("kind").and_then(Value::as_str) == Some("weekly_scoped")
-                && limit
-                    .pointer("/scope/model/display_name")
-                    .and_then(Value::as_str)
-                    == Some("Fable")
-        }) {
+        for limit in limits {
+            let Some(kind) = limit
+                .get("kind")
+                .and_then(Value::as_str)
+                .filter(|kind| kind.ends_with("_scoped"))
+            else {
+                continue;
+            };
+            let Some(label) = limit
+                .pointer("/scope/model/display_name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            let slug = label
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
+            if slug.is_empty() {
+                continue;
+            }
+            let id = if label == "Fable" && kind == "weekly_scoped" {
+                "fable".to_owned()
+            } else if kind == "weekly_scoped" {
+                format!("scoped-{slug}")
+            } else {
+                format!("scoped-{}-{slug}", kind.trim_end_matches("_scoped"))
+            };
+            let period = limit
+                .get("period_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(match kind {
+                    "weekly_scoped" => 7 * 24 * 60 * 60,
+                    "daily_scoped" => 24 * 60 * 60,
+                    "session_scoped" | "five_hour_scoped" => 5 * 60 * 60,
+                    _ => 0,
+                });
             append_percent(
                 &mut quotas,
-                "fable",
-                "Fable",
+                &id,
+                label,
                 limit.get("percent").and_then(number),
                 limit.get("resets_at").and_then(reset_date),
-                7 * 24 * 60 * 60,
+                period,
             );
         }
     }
@@ -273,6 +307,36 @@ mod tests {
         assert_eq!(
             mapped.quotas[0].resets_at.unwrap().to_rfc3339(),
             "2099-06-01T12:00:00.123456+00:00"
+        );
+    }
+    #[test]
+    fn all_scoped_models_are_mapped_and_missing_names_are_skipped() {
+        let body = serde_json::json!({"limits": [
+            {"kind":"weekly_scoped", "scope":{"model":{"display_name":"Fable"}}, "percent":12, "resets_at":"2026-10-01T00:00:00Z"},
+            {"kind":"weekly_scoped", "scope":{"model":{"display_name":"Opus 5.5"}}, "percent":34, "resets_at":"2026-10-02T00:00:00Z"},
+            {"kind":"weekly_scoped", "scope":{"model":{}}, "percent":56},
+            {"kind":"weekly_scoped", "scope":{"model":{"display_name":"  "}}, "percent":56},
+            {"kind":"daily_scoped", "scope":{"model":{"display_name":"Opus 5.5"}}, "percent":7},
+            {"kind":"future_scoped", "scope":{"model":{"display_name":"Other"}}, "percent":8}
+        ]});
+        let mapped = map_usage(StatusCode::OK, &body, &ClaudeOAuth::default()).unwrap();
+        assert_eq!(
+            mapped
+                .quotas
+                .iter()
+                .map(|q| (q.id.as_str(), q.label.as_str(), q.period_seconds))
+                .collect::<Vec<_>>(),
+            [
+                ("fable", "Fable", 604800),
+                ("scoped-opus-5-5", "Opus 5.5", 604800),
+                ("scoped-daily-opus-5-5", "Opus 5.5", 86400),
+                ("scoped-future-other", "Other", 0)
+            ]
+        );
+        assert_eq!(mapped.quotas[1].used_percent, 34.0);
+        assert_eq!(
+            mapped.quotas[1].resets_at.unwrap().to_rfc3339(),
+            "2026-10-02T00:00:00+00:00"
         );
     }
 }

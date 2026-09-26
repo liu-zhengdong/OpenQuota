@@ -767,7 +767,18 @@ fn normalize_with_persisted_accounts(
             settings.known_provider_ids.push(definition.id.clone());
         }
         provider.detected = detected.contains(&definition.id);
-        normalize_metrics(&mut provider.metrics, &definition.metrics);
+        let mut definitions = definition.metrics.clone();
+        for metric in &provider.metrics {
+            if !definitions.iter().any(|known| known.id == metric.id) {
+                if let Some(dynamic) = registry
+                    .metric(&metric.id)
+                    .filter(|_| metric.id.starts_with(&format!("{}.", provider.id)))
+                {
+                    definitions.push(dynamic);
+                }
+            }
+        }
+        normalize_metrics(&mut provider.metrics, &definitions);
         normalized.push(provider);
     }
     for definition in &catalog.providers {
@@ -1679,10 +1690,6 @@ mod tests {
             metrics.iter().filter(|metric| metric.pinned).count(),
             MAX_PINS_PER_PROVIDER
         );
-        assert!(metrics
-            .iter()
-            .find(|metric| metric.id.ends_with(".trend"))
-            .is_none_or(|metric| !metric.pinned));
     }
 
     #[test]
@@ -2145,7 +2152,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: Default::default(),
             warnings: Vec::new(),
             refreshed_at: chrono::Utc::now(),
         };
@@ -2304,5 +2310,39 @@ mod tests {
         assert!(!openrouter.detected);
         assert!(openrouter.enabled);
         assert_eq!(service.credential_revision.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn normalization_removes_history_and_preserves_scoped_model_layouts() {
+        let registry = catalog();
+        let mut settings = default_settings(&registry, &HashSet::new());
+        let provider = settings
+            .providers
+            .iter_mut()
+            .find(|p| p.id == "claude")
+            .unwrap();
+        let fable = provider
+            .metrics
+            .iter_mut()
+            .find(|m| m.id == "claude.fable")
+            .unwrap();
+        fable.enabled = true;
+        fable.section = MetricSection::AlwaysVisible;
+        let saved_fable = fable.clone();
+        let mut scoped = saved_fable.clone();
+        scoped.id = "claude.scoped-opus-5-5".into();
+        scoped.enabled = false;
+        provider.metrics.push(scoped.clone());
+        let mut obsolete = saved_fable.clone();
+        obsolete.id = "claude.today".into();
+        provider.metrics.push(obsolete);
+        normalize(&registry, &mut settings, &HashSet::new());
+        let provider = settings
+            .providers
+            .iter()
+            .find(|p| p.id == "claude")
+            .unwrap();
+        assert!(provider.metrics.contains(&saved_fable));
+        assert!(provider.metrics.contains(&scoped));
+        assert!(!provider.metrics.iter().any(|m| m.id == "claude.today"));
     }
 }

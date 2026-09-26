@@ -133,7 +133,7 @@ mod tests {
     use chrono::Utc;
     use notify_rust::{CloseReason, NotificationResponse};
 
-    use crate::models::{ProviderSnapshot, ProviderViewState, UsageHistory};
+    use crate::models::{ProviderSnapshot, ProviderViewState};
 
     use super::{notification_snapshot, response_opens_window};
 
@@ -158,7 +158,6 @@ mod tests {
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
                 notices: Vec::new(),
-                usage: UsageHistory::default(),
                 warnings: Vec::new(),
                 refreshed_at: Utc::now(),
             }),

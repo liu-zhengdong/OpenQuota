@@ -2839,7 +2839,7 @@ dependencies = [
 
 [[package]]
 name = "openquota"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -2868,7 +2868,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tiny-skia",
  "tokio",
- "walkdir",
  "webview2-com",
  "windows",
  "windows-sys 0.61.2",

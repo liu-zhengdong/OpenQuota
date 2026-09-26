@@ -30,13 +30,13 @@ describe('release updater metadata', () => {
     const update = createUpdaterMetadata(
       release,
       signatures,
-      'deviffyy/OpenQuota',
+      'liu-zhengdong/OpenQuota',
       'v0.2.0',
       '0.2.0',
     );
 
     expect(update.platforms['windows-x86_64'].url).toBe(
-      'https://github.com/deviffyy/OpenQuota/releases/download/v0.2.0/OpenQuota_0.2.0_x64-setup.exe',
+      'https://github.com/liu-zhengdong/OpenQuota/releases/download/v0.2.0/OpenQuota_0.2.0_x64-setup.exe',
     );
     expect(update.platforms['windows-aarch64'].url).toContain('_arm64-setup.exe');
     expect(update.platforms['linux-aarch64'].url).toContain('_arm64.AppImage');
@@ -64,7 +64,7 @@ describe('release updater metadata', () => {
           ),
         },
         signatures,
-        'deviffyy/OpenQuota',
+        'liu-zhengdong/OpenQuota',
         'v0.2.0',
         '0.2.0',
       ),
