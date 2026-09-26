@@ -1755,4 +1755,96 @@ describe('OpenQuota dashboard', () => {
     expect(theme).toHaveFocus();
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
   });
+
+  it('sorts providers by spare from Options while keeping the custom order as default', async () => {
+    // The shared fixtures reset in 2099, which reports no elapsed period, so both
+    // providers would have no spare to sort by. Rebase each comparison window on
+    // a reset that lands halfway through its own period.
+    const resetsIn = (periodSeconds: number) =>
+      new Date(Date.now() + (periodSeconds / 2) * 1000).toISOString();
+    const codex = structuredClone(codexState);
+    codex.snapshot!.quotas = codex.snapshot!.quotas.map((quota) =>
+      quota.id === 'weekly' ? { ...quota, resetsAt: resetsIn(quota.periodSeconds) } : quota,
+    );
+    const claude = structuredClone(claudeState);
+    claude.snapshot!.quotas = claude.snapshot!.quotas.map((quota) =>
+      quota.id === 'session' ? { ...quota, resetsAt: resetsIn(quota.periodSeconds) } : quota,
+    );
+
+    const saved = structuredClone(settingsState);
+    saved.settings.providers = [
+      {
+        id: 'codex',
+        enabled: true,
+        detected: true,
+        expanded: false,
+        metrics: [
+          { id: 'codex.session', enabled: true, section: 'alwaysVisible', pinned: true },
+          { id: 'codex.weekly', enabled: true, section: 'alwaysVisible', pinned: true },
+        ],
+      },
+      {
+        id: 'claude',
+        enabled: true,
+        detected: true,
+        expanded: false,
+        metrics: [
+          { id: 'claude.session', enabled: true, section: 'alwaysVisible', pinned: false },
+          { id: 'claude.weekly', enabled: true, section: 'alwaysVisible', pinned: false },
+        ],
+      },
+    ];
+    const defaultInvoke = mocks.invoke.getMockImplementation()!;
+    mockInvoke((command, args) => {
+      if (
+        command === 'get_usage_state' ||
+        command === 'refresh_usage' ||
+        command === 'refresh_provider_usage'
+      )
+        return Promise.resolve({ providers: { codex, claude } });
+      if (command === 'get_app_settings') return Promise.resolve(saved);
+      if (command === 'save_app_settings')
+        return Promise.resolve({ ...saved, settings: args?.settings ?? saved.settings });
+      return defaultInvoke(command, args);
+    });
+
+    render(App);
+    await screen.findByText('Plus');
+    const providerOrder = () =>
+      [...document.querySelectorAll('[data-provider-id]')].map((element) =>
+        element.getAttribute('data-provider-id'),
+      );
+
+    expect(providerOrder()).toEqual(['codex', 'claude']);
+    expect(document.querySelector('.drag-grip')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByLabelText('Open options'));
+    await fireEvent.click(screen.getByText('Sort Providers').closest('summary')!);
+    expect(screen.getByRole('menuitemradio', { name: 'By Spare' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'By Spare' }));
+
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        'save_app_settings',
+        expect.objectContaining({
+          settings: expect.objectContaining({ providerSort: 'spare' }),
+        }),
+      ),
+    );
+    expect(providerOrder()).toEqual(['claude', 'codex']);
+    expect(document.querySelector('.drag-grip')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByLabelText('Open options'));
+    await fireEvent.click(screen.getByText('Sort Providers').closest('summary')!);
+    expect(screen.getByRole('menuitemradio', { name: 'By Spare' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Custom Order' }));
+    await waitFor(() => expect(providerOrder()).toEqual(['codex', 'claude']));
+    expect(document.querySelector('.drag-grip')).toBeInTheDocument();
+  });
 });

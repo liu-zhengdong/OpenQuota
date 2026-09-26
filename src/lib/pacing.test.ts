@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatLimit, formatReset, paceTooltip, projectPace } from './pacing';
+import {
+  formatLimit,
+  formatReset,
+  paceTooltip,
+  projectPace,
+  selectComparisonWindow,
+  sparePercent,
+} from './pacing';
 import type { QuotaWindow } from './types';
 
 const now = new Date('2026-07-10T12:00:00Z').getTime();
@@ -118,5 +125,37 @@ describe('quota pacing', () => {
     expect(dayPeriod).toBeTruthy();
     expect(twelveHour).toContain(dayPeriod);
     expect(twentyFourHour).not.toContain(dayPeriod);
+  });
+
+  it('compares a provider against its weekly window when it has one', () => {
+    const session = quota(20, 0.5, { id: 'session', label: 'Session', periodSeconds: 18_000 });
+    const weekly = quota(40, 0.5, { id: 'weekly', label: 'Weekly', periodSeconds: 604_800 });
+    const sparkWeekly = quota(10, 0.5, {
+      id: 'sparkWeekly',
+      label: 'Spark Weekly',
+      periodSeconds: 604_800,
+    });
+    const dollars = quota(90, 0.5, {
+      id: 'extra',
+      label: 'Extra Usage',
+      format: 'dollars',
+      usedValue: 9,
+      limitValue: 10,
+      periodSeconds: 0,
+      resetsAt: null,
+    });
+
+    expect(selectComparisonWindow([session, weekly, sparkWeekly, dollars])).toBe(weekly);
+    expect(selectComparisonWindow([session, dollars])).toBe(session);
+    expect(selectComparisonWindow([dollars])).toBeNull();
+    expect(selectComparisonWindow([])).toBeNull();
+  });
+
+  it('measures spare against the same pacing boundaries', () => {
+    expect(sparePercent(quota(30, 0.5), now)).toBe(20);
+    expect(sparePercent(quota(60, 0.5), now)).toBe(-10);
+    expect(sparePercent(quota(0, 0.5), now)).toBeNull();
+    expect(sparePercent(quota(99.51, 0.5, { resetsAt: null }), now)).toBeNull();
+    expect(sparePercent(null, now)).toBeNull();
   });
 });

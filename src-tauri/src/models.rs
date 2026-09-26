@@ -525,6 +525,15 @@ pub enum TimeFormatPreference {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum ProviderSort {
+    Spare,
+    #[default]
+    #[serde(other)]
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 #[repr(u8)]
 pub enum LogLevel {
     Error = 0,
@@ -587,6 +596,7 @@ pub struct AppSettings {
     pub usage_display: UsageDisplay,
     pub reset_display: ResetDisplay,
     pub time_format: TimeFormatPreference,
+    pub provider_sort: ProviderSort,
     pub always_show_pacing: bool,
     pub launch_at_login: bool,
     pub auto_check_updates: bool,
@@ -613,6 +623,7 @@ impl Default for AppSettings {
             usage_display: UsageDisplay::Left,
             reset_display: ResetDisplay::Countdown,
             time_format: TimeFormatPreference::System,
+            provider_sort: ProviderSort::Custom,
             always_show_pacing: false,
             launch_at_login: false,
             auto_check_updates: true,
@@ -652,7 +663,8 @@ pub struct SettingsViewState {
 mod tests {
     use super::{
         ApiKeyMutationOutcome, ApiKeyStatus, AppSettings, LogLevel, ProviderApiKeyState,
-        ProviderErrorKind, ProviderLink, ProviderSnapshot, ProviderViewState, WindowMode,
+        ProviderErrorKind, ProviderLink, ProviderSnapshot, ProviderSort, ProviderViewState,
+        WindowMode,
     };
 
     #[test]
@@ -665,6 +677,7 @@ mod tests {
         object.remove("providerNames");
         object.remove("windowMode");
         object.remove("reduceAnimations");
+        object.remove("providerSort");
 
         let settings: AppSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.dismissed_update_version, None);
@@ -673,6 +686,22 @@ mod tests {
         assert_eq!(settings.log_level, LogLevel::Info);
         assert_eq!(settings.window_mode, WindowMode::Popup);
         assert!(!settings.reduce_animations);
+        assert_eq!(settings.provider_sort, ProviderSort::Custom);
+    }
+
+    #[test]
+    fn unknown_persisted_provider_sorts_keep_the_custom_order() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value["providerSort"] = serde_json::json!("byName");
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.provider_sort, ProviderSort::Custom);
+
+        let value = serde_json::to_value(AppSettings {
+            provider_sort: ProviderSort::Spare,
+            ..AppSettings::default()
+        })
+        .unwrap();
+        assert_eq!(value["providerSort"], "spare");
     }
 
     #[test]

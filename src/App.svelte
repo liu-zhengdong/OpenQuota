@@ -85,6 +85,7 @@
   let shareMenuOpen = $state(false);
   let optionsMenuElement = $state<HTMLDetailsElement>();
   let shareMenuElement = $state<HTMLDetailsElement>();
+  let sortMenuElement = $state<HTMLDetailsElement>();
   let shareTimer: ReturnType<typeof setTimeout> | undefined;
   const providerStates = $derived(Object.values(viewState.providers));
   const anyRefreshing = $derived(providerStates.some((state) => state.refreshing));
@@ -102,6 +103,7 @@
   );
   const providerDisplayName = (id: string) =>
     catalog.displayName(id, settingsState?.settings.providerNames);
+  const providerSort = $derived(settingsState?.settings.providerSort ?? 'custom');
   const updates = new UpdateController();
   let resizeEdge = $state<PanelResizeEdge>(platform === 'windows' ? 'top' : 'bottom');
   const renderedResizeEdge = $derived(floatingWindow ? 'bottom' : resizeEdge);
@@ -209,6 +211,12 @@
       ...current.settings,
       windowMode: floatingWindow ? 'popup' : 'floating',
     });
+  }
+
+  function setProviderSort(value: AppSettings['providerSort']) {
+    const current = settingsState;
+    if (!current || current.settings.providerSort === value) return;
+    saveSettings({ ...current.settings, providerSort: value });
   }
 
   function cloneSettings(value: AppSettings): AppSettings {
@@ -503,6 +511,7 @@
   function closeOptionsMenu(restoreFocus = false) {
     if (shareMenuElement?.open) shareMenuElement.open = false;
     shareMenuOpen = false;
+    if (sortMenuElement?.open) sortMenuElement.open = false;
     if (!optionsMenuElement?.open) return;
     optionsMenuElement.open = false;
     if (restoreFocus) optionsMenuElement.querySelector<HTMLElement>('summary')?.focus();
@@ -972,6 +981,39 @@
                   onclick={() => navigate('settings')}
                   ><Icon name="gear" /><span>Settings</span><kbd>{shortcuts.settings}</kbd></button
                 >
+                <details class="share-menu sort-menu" bind:this={sortMenuElement}>
+                  <summary
+                    ><span class="share-menu__direction"
+                      ><Icon name="chevron-left" size={12} /></span
+                    ><span>Sort Providers</span></summary
+                  >
+                  <div role="menu" aria-label="Sort providers">
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={providerSort === 'custom'}
+                      onclick={() => setProviderSort('custom')}
+                      ><span>Custom Order</span>{#if providerSort === 'custom'}<Icon
+                          name="check"
+                          size={12}
+                          strokeWidth={2.4}
+                        />
+                      {/if}</button
+                    >
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={providerSort === 'spare'}
+                      onclick={() => setProviderSort('spare')}
+                      ><span>By Spare</span>{#if providerSort === 'spare'}<Icon
+                          name="check"
+                          size={12}
+                          strokeWidth={2.4}
+                        />
+                      {/if}</button
+                    >
+                  </div>
+                </details>
                 <hr />
                 <details
                   bind:this={shareMenuElement}
@@ -1660,6 +1702,21 @@
       background: transparent;
       font-size: 11px;
       text-align: left;
+    }
+
+    .sort-menu button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .sort-menu button span {
+      flex: 1;
+    }
+
+    .sort-menu button[aria-checked='true'] {
+      color: var(--meter-fill);
     }
 
     .transient-pill {
