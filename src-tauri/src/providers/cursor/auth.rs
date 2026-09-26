@@ -14,6 +14,7 @@ const REFRESH_TOKEN_KEY: &str = "cursorAuth/refreshToken";
 const MEMBERSHIP_TYPE_KEY: &str = "cursorAuth/stripeMembershipType";
 const ACCESS_TOKEN_SERVICE: &str = "cursor-access-token";
 const REFRESH_TOKEN_SERVICE: &str = "cursor-refresh-token";
+const CLI_KEYCHAIN_ACCOUNT: &str = "cursor-user";
 const REFRESH_BUFFER_MINUTES: i64 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,7 +164,9 @@ fn keychain_accounts() -> Vec<String> {
         .ok()
         .or_else(|| std::env::var("USERNAME").ok())
         .and_then(non_empty);
-    let mut accounts = vec![String::new()];
+    // cursor-agent (the CLI) stores its tokens under the fixed "cursor-user" account;
+    // without the desktop app this is the only place they exist.
+    let mut accounts = vec![String::new(), CLI_KEYCHAIN_ACCOUNT.to_owned()];
     if let Some(current) = current {
         accounts.push(current);
     }
@@ -316,5 +319,10 @@ mod tests {
         assert!(auth.needs_refresh(now));
         auth.access_token = Some(jwt("auth0|user", (now + Duration::minutes(6)).timestamp()));
         assert!(!auth.needs_refresh(now));
+    }
+
+    #[test]
+    fn keychain_lookup_includes_the_cursor_agent_account() {
+        assert!(keychain_accounts().contains(&"cursor-user".to_owned()));
     }
 }
