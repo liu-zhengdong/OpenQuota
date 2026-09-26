@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_notification::{NotificationExt, PermissionState};
 
 use crate::{
+    i18n::{t, UiLocale, UiLocaleState},
     models::{ProviderSnapshot, ProviderViewState},
     pacing::{NotificationEvaluator, PaceAlert},
     popup::PopupDismissGuard,
@@ -62,17 +63,22 @@ fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
         }
         return alerts.to_vec();
     }
+    let locale = app
+        .try_state::<UiLocaleState>()
+        .map(|state| state.get())
+        .unwrap_or(UiLocale::En);
     alerts
         .iter()
         .filter_map(|alert| {
             let result = show(
                 app,
-                alert.milestone.title(),
+                locale,
+                alert.milestone.title(locale),
                 &format!(
                     "{} · {}\n{}",
                     alert.provider,
-                    alert.metric,
-                    alert.milestone.body()
+                    crate::i18n::window_label(locale, &alert.window_id, &alert.metric),
+                    alert.milestone.body(locale)
                 ),
             );
             if result.is_ok() {
@@ -86,11 +92,14 @@ fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
         .collect()
 }
 
-fn show(app: &AppHandle, title: &str, body: &str) -> Result<(), String> {
+fn show(app: &AppHandle, locale: UiLocale, title: &str, body: &str) -> Result<(), String> {
+    let open_label = t(locale, "notifications.openAction");
     let mut notification = notify_rust::Notification::new();
     notification.summary(title).body(body).appname("OpenQuota");
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    notification.action("default", "Open OpenQuota");
+    notification.action("default", open_label);
+    #[cfg(target_os = "windows")]
+    let _ = open_label;
     #[cfg(target_os = "windows")]
     notification.app_id(&app.config().identifier);
     #[cfg(target_os = "macos")]

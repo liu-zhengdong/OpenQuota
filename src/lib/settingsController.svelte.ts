@@ -1,4 +1,5 @@
 import { getAppSettings, saveAppSettings } from './backend';
+import { t } from './i18n';
 import type { AppSettings, SettingsViewState } from './types';
 
 export type SettingsMutation = (
@@ -28,7 +29,7 @@ function strictlyFollows(candidate: SettingsViewState, current: SettingsViewStat
 }
 
 function errorMessage(error: unknown) {
-  return typeof error === 'string' ? error : 'Settings could not be saved.';
+  return typeof error === 'string' ? error : t('errors.settingsSaveFailed');
 }
 
 export class SettingsController {
@@ -111,7 +112,7 @@ export class SettingsController {
   }
 
   runMutation(mutation: SettingsMutation) {
-    if (!this.state) return Promise.reject('Settings are unavailable.');
+    if (!this.state) return Promise.reject(t('errors.settingsUnavailable'));
     return this.#enqueueMutation(mutation);
   }
 
@@ -123,7 +124,7 @@ export class SettingsController {
     const task = this.#mutationQueue.then(async () => {
       if (generation !== this.#mutationGeneration) throw new CancelledSettingsMutation();
       const base = this.#serverState ?? this.state;
-      if (!base) throw new Error('Settings are unavailable.');
+      if (!base) throw new Error(t('errors.settingsUnavailable'));
 
       try {
         const saved = await mutation(base.settingsRevision, base.accountRevision);
@@ -178,7 +179,7 @@ export class SettingsController {
         this.state = state;
       }
     } catch {
-      this.onError('Settings could not be saved or reloaded.');
+      this.onError(t('errors.settingsReloadFailed'));
     }
   }
 }

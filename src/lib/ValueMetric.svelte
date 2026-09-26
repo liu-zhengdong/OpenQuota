@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
+  import { t } from './i18n';
   import { formatMetricValue } from './metricFormat';
-  import { formatReset } from './pacing';
+  import { formatResetDuration, formatResetWhen } from './pacing';
   import Icon from './Icon.svelte';
   import ResetCreditsDetail from './ResetCreditsDetail.svelte';
   import type { ValueMetric } from './types';
@@ -27,25 +28,26 @@
   const reading = $derived(
     metric?.values
       .map((value) => formatMetricValue(value.number, value.kind, 'row', value.label ?? undefined))
-      .join(' · ') ?? 'No data',
+      .join(' · ') ?? t('common.noData'),
   );
   const tooltip = $derived.by(() => {
     if (!metric) return undefined;
     if (metric.expiriesAt.length && !showsResetDetail) {
       const sorted = [...metric.expiriesAt].sort();
       const lines = sorted.map((expiry, index) => {
-        const formatted = formatReset(expiry, now, resetDisplay, timeFormat).replace(
-          /^Resets(?: in)?\s*/,
-          '',
-        );
+        const formatted =
+          resetDisplay === 'countdown'
+            ? (formatResetDuration(expiry, now) ?? t('metrics.expiringSoon'))
+            : formatResetWhen(expiry, now, timeFormat);
         return `${index + 1}. ${formatted}`;
       });
-      return [resetDisplay === 'countdown' ? 'Resets expire in:' : 'Resets expire:', ...lines].join(
-        '\n',
-      );
+      return [
+        resetDisplay === 'countdown' ? t('metrics.resetsExpireIn') : t('metrics.resetsExpire'),
+        ...lines,
+      ].join('\n');
     }
     const count = metric.values[0]?.number ?? 0;
-    if (metric.id === 'rateLimitResets' && count > 0) return 'Expiry times unavailable';
+    if (metric.id === 'rateLimitResets' && count > 0) return t('metrics.expiryTimesUnavailable');
     if (metric.values.some((value) => Math.abs(value.number) >= 1000)) {
       return metric.values
         .map((value) =>
@@ -138,8 +140,8 @@
       {#if hasEstimatedValue}
         <span
           class="value-estimate"
-          data-tooltip="Estimated locally, so it may differ from billed usage."
-          aria-label="Estimated value"
+          data-tooltip={t('metrics.estimatedLocalNote')}
+          aria-label={t('metrics.estimatedValue')}
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
       {/if}
@@ -150,8 +152,8 @@
       {#if hasEstimatedValue}
         <span
           class="value-estimate"
-          data-tooltip="Estimated locally, so it may differ from billed usage."
-          aria-label="Estimated value"
+          data-tooltip={t('metrics.estimatedLocalNote')}
+          aria-label={t('metrics.estimatedValue')}
           role="img"><Icon name="about" size={11} strokeWidth={1.9} /></span
         >
       {/if}

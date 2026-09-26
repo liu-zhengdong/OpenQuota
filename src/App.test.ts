@@ -56,6 +56,7 @@ function mockInvoke(
         implementation('get_app_settings', args),
       ]).then(([usage, settings]) => ({ usage, settings, catalog }));
     }
+    if (command === 'set_resolved_ui_locale') return Promise.resolve();
     return implementation(command, args);
   });
 }
@@ -101,6 +102,7 @@ describe('OpenQuota dashboard', () => {
       if (command === 'get_log_path') return Promise.resolve('C:\\OpenQuota\\logs\\OpenQuota.log');
       if (command === 'open_log_folder') return Promise.resolve();
       if (command === 'dismiss_main_window') return Promise.resolve();
+      if (command === 'set_resolved_ui_locale') return Promise.resolve();
       if (command === 'check_for_updates')
         return Promise.resolve({
           available: false,

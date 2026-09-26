@@ -139,20 +139,26 @@ pub enum Milestone {
 }
 
 impl Milestone {
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::AlmostOut => "Almost Out",
-            Self::CuttingItClose => "Cutting It Close",
-            Self::WillRunOut => "Will Run Out",
-        }
+    pub fn title(self, locale: crate::i18n::UiLocale) -> &'static str {
+        crate::i18n::t(
+            locale,
+            match self {
+                Self::AlmostOut => "notifications.almostOutTitle",
+                Self::CuttingItClose => "notifications.cuttingItCloseTitle",
+                Self::WillRunOut => "notifications.willRunOutTitle",
+            },
+        )
     }
 
-    pub fn body(self) -> &'static str {
-        match self {
-            Self::AlmostOut => "Under 10% usage remaining for this window.",
-            Self::CuttingItClose => "Projected to finish close to your limit.",
-            Self::WillRunOut => "Projected to run out before the limit resets.",
-        }
+    pub fn body(self, locale: crate::i18n::UiLocale) -> &'static str {
+        crate::i18n::t(
+            locale,
+            match self {
+                Self::AlmostOut => "notifications.almostOutBody",
+                Self::CuttingItClose => "notifications.cuttingItCloseBody",
+                Self::WillRunOut => "notifications.willRunOutBody",
+            },
+        )
     }
 }
 
@@ -161,6 +167,7 @@ pub struct PaceAlert {
     pub milestone: Milestone,
     pub provider: String,
     pub metric: String,
+    pub window_id: String,
     metric_id: String,
     previous_severity: Option<PaceSeverity>,
     previous_was_under_ten: bool,
@@ -274,6 +281,7 @@ impl NotificationEvaluator {
                 alert.provider = settings
                     .provider_display_name(provider_definition)
                     .to_owned();
+                alert.window_id.clone_from(&window.id);
                 alert.metric_id.clone_from(&metric_id);
                 alert.previous_severity = previous_severity;
                 alert.previous_was_under_ten = previous_was_under_ten;
@@ -362,6 +370,7 @@ fn transition(
             milestone,
             provider: String::new(),
             metric: metric.into(),
+            window_id: String::new(),
             metric_id: String::new(),
             previous_severity: None,
             previous_was_under_ten: false,
@@ -725,6 +734,7 @@ mod tests {
                 milestone: Milestone::WillRunOut,
                 provider: "Codex".into(),
                 metric: "Weekly".into(),
+                window_id: "weekly".into(),
                 metric_id: "codex.weekly".into(),
                 previous_severity: Some(PaceSeverity::Healthy),
                 previous_was_under_ten: false,
@@ -733,6 +743,7 @@ mod tests {
                 milestone: Milestone::AlmostOut,
                 provider: "Codex".into(),
                 metric: "Weekly".into(),
+                window_id: "weekly".into(),
                 metric_id: "codex.weekly".into(),
                 previous_severity: Some(PaceSeverity::Healthy),
                 previous_was_under_ten: false,

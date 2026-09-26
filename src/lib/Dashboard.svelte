@@ -9,6 +9,8 @@
   import ProviderNoticeRow from './ProviderNoticeRow.svelte';
   import Icon from './Icon.svelte';
   import MetricRenderer from './MetricRenderer.svelte';
+  import { t } from './i18n';
+  import { metricLabel } from './i18n/labels';
   import type { ProviderCatalogIndex } from './metrics';
   import { selectComparisonWindow, sparePercent } from './pacing';
   import { canRenameProvider } from './providerNames';
@@ -296,13 +298,19 @@
   }
   function stalenessTooltip(refreshedAt: string) {
     const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(refreshedAt)) / 1000));
-    if (!Number.isFinite(elapsedSeconds)) return 'Last update time unavailable';
-    if (elapsedSeconds < 60) return 'Last updated moments ago';
+    if (!Number.isFinite(elapsedSeconds)) return t('dashboard.lastUpdateUnavailable');
+    if (elapsedSeconds < 60) return t('dashboard.lastUpdatedMomentsAgo');
     const minutes = Math.floor(elapsedSeconds / 60);
-    if (minutes < 60) return `Last updated ${minutes}m ago`;
+    if (minutes < 60) return t('dashboard.lastUpdatedMinutesAgo', { minutes });
     const hours = Math.floor(minutes / 60);
     const remainingMinutes = minutes % 60;
-    return `Last updated ${hours}h${remainingMinutes ? ` ${remainingMinutes}m` : ''} ago`;
+    return remainingMinutes
+      ? t('dashboard.lastUpdatedHoursMinutesAgo', { hours, minutes: remainingMinutes })
+      : t('dashboard.lastUpdatedHoursAgo', { hours });
+  }
+  function metricTitle(metricId: string) {
+    const definition = metricDefinition(metricId);
+    return definition ? metricLabel(definition) : metricId;
   }
 </script>
 
@@ -314,20 +322,20 @@
 />
 
 {#if updateStatus?.available && updateStatus.version !== settings.dismissedUpdateVersion}
-  <section class="hint-card update-banner" aria-label="Update Available">
+  <section class="hint-card update-banner" aria-label={t('dashboard.updateAvailable')}>
     <span class="hint-card__icon"><Icon name="refresh" size={16} strokeWidth={2} /></span>
     <div>
-      <strong>Update Available</strong>
-      <span>OpenQuota {updateStatus.version} is ready to download.</span>
+      <strong>{t('dashboard.updateAvailable')}</strong>
+      <span>{t('dashboard.updateReady', { version: updateStatus.version ?? '' })}</span>
       {#if updateStatus.body}<details class="update-notes">
-          <summary>What’s new</summary>
+          <summary>{t('dashboard.whatsNew')}</summary>
           <p>{updateStatus.body}</p>
         </details>{/if}
       {#if installingUpdate && updateProgress}
         <div
           class="update-progress"
           role="progressbar"
-          aria-label="Update download"
+          aria-label={t('dashboard.updateDownload')}
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow={updateProgress.phase === 'installing'
@@ -340,12 +348,12 @@
         </div>
         <small>
           {updateProgress.phase === 'installing'
-            ? 'Installing update…'
+            ? t('dashboard.installingUpdate')
             : updateProgress.phase === 'retrying'
-              ? 'Download interrupted. Retrying…'
+              ? t('dashboard.downloadRetrying')
               : updateProgress.percent === null
-                ? 'Downloading update…'
-                : `Downloading update… ${updateProgress.percent}%`}
+                ? t('dashboard.downloadingUpdate')
+                : t('dashboard.downloadingUpdatePercent', { percent: updateProgress.percent })}
         </small>
       {/if}
       {#if updateError}<div class="update-error" role="alert">
@@ -360,22 +368,22 @@
         disabled={installingUpdate}
         >{updateStatus.installable
           ? installingUpdate
-            ? 'Updating…'
+            ? t('dashboard.updating')
             : updateError?.retryable
-              ? 'Try Again'
-              : 'Install Update'
-          : 'Download from GitHub'}</button
+              ? t('dashboard.tryAgain')
+              : t('dashboard.installUpdate')
+          : t('dashboard.downloadFromGitHub')}</button
       >
       {#if updateStatus.installable && !installingUpdate}
         <button type="button" class="update-release-action" onclick={onOpenUpdatePage}
-          >View Release</button
+          >{t('dashboard.viewRelease')}</button
         >
       {/if}
     </div>
     <button
       class="hint-card__dismiss"
       type="button"
-      aria-label="Dismiss"
+      aria-label={t('common.dismiss')}
       onclick={() =>
         onSettingsChange({
           ...settings,
@@ -388,11 +396,9 @@
 {#if !settings.detectionNoticeDismissed}
   <section class="detection-card" out:scale={{ start: 0.95, ...springMotion(reducedMotion) }}>
     <div>
-      <strong>Welcome to OpenQuota</strong><span
-        >We set you up with the AI tools found on your computer. Add or hide providers any time.</span
-      >
+      <strong>{t('dashboard.welcomeTitle')}</strong><span>{t('dashboard.welcomeBody')}</span>
     </div>
-    <button type="button" onclick={onCustomize}>Open Customize</button>
+    <button type="button" onclick={onCustomize}>{t('dashboard.openCustomize')}</button>
     <button class="dismiss" type="button" aria-label="Dismiss" onclick={dismissDetection}
       ><Icon name="close" size={10} strokeWidth={2.2} /></button
     >
@@ -412,7 +418,7 @@
       data-reorder-id={provider.id}
       role="group"
       tabindex="-1"
-      aria-label={`${providerDisplayName(provider.id)} provider`}
+      aria-label={t('dashboard.providerGroup', { name: providerDisplayName(provider.id) })}
       use:pointerReorder={{
         id: provider.id,
         group: 'dashboard-providers',
@@ -432,8 +438,8 @@
         data-reorder-handle
         role="group"
         aria-label={sortedBySpare
-          ? `${providerDisplayName(provider.id)} provider, sorted by spare`
-          : `Drag ${providerDisplayName(provider.id)} to reorder`}
+          ? t('dashboard.providerSortedBySpare', { name: providerDisplayName(provider.id) })
+          : t('dashboard.dragToReorder', { name: providerDisplayName(provider.id) })}
       >
         {#if !sortedBySpare}
           <span
@@ -442,7 +448,7 @@
             data-reorder-touch-handle
             role="button"
             tabindex="0"
-            aria-label={`Move ${providerDisplayName(provider.id)}`}
+            aria-label={t('dashboard.moveProvider', { name: providerDisplayName(provider.id) })}
             aria-describedby="reorder-instructions"
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><Icon name="grip-dots" size={13} /></span
           >
@@ -452,14 +458,17 @@
         {#if state?.snapshot && state.stale}<span
             class="status-badge"
             data-tooltip={stalenessTooltip(snapshot.refreshedAt)}
-            >Outdated<span class="sr-only">. {stalenessTooltip(snapshot.refreshedAt)}</span></span
+            >{t('dashboard.outdated')}<span class="sr-only"
+              >. {stalenessTooltip(snapshot.refreshedAt)}</span
+            ></span
+          >
           >{/if}
         <span
           class="provider-status-slot"
           class:active={Boolean(state?.refreshing || state?.error || snapshot.warnings.length > 0)}
         >
           {#if state?.refreshing}
-            <span class="provider-refreshing" aria-label="Refreshing"
+            <span class="provider-refreshing" aria-label={t('dashboard.refreshing')}
               ><Icon name="refresh" size={12} strokeWidth={2} /></span
             >
           {:else if state?.error}
@@ -482,7 +491,7 @@
       </header>
       <section
         class="provider-card"
-        aria-label={`${providerDisplayName(provider.id)} usage`}
+        aria-label={t('dashboard.providerUsage', { name: providerDisplayName(provider.id) })}
         aria-busy={state?.refreshing ? 'true' : undefined}
       >
         {#each snapshot.notices as notice (notice.id)}
@@ -498,16 +507,23 @@
               {#if catalog.supportsApiKeyConfiguration(provider.id) && (state.errorKind === 'authentication' || state.errorKind === 'permission' || state.errorKind === 'credentialStorage')}
                 <button
                   type="button"
-                  aria-label={`Configure ${providerDisplayName(provider.id)}`}
-                  onclick={() => onOpenProviderCustomize(provider.id)}>Configure</button
+                  aria-label={t('dashboard.configureProvider', {
+                    name: providerDisplayName(provider.id),
+                  })}
+                  onclick={() => onOpenProviderCustomize(provider.id)}
+                  >{t('common.configure')}</button
+                >
                 >
               {/if}
               <button
                 type="button"
-                aria-label={`${state.refreshing ? 'Retrying' : 'Retry'} ${providerDisplayName(provider.id)}`}
+                aria-label={state.refreshing
+                  ? t('dashboard.retryingProvider', { name: providerDisplayName(provider.id) })
+                  : t('dashboard.retryProvider', { name: providerDisplayName(provider.id) })}
                 aria-disabled={state.refreshing}
                 onclick={(event) => void retryProvider(event, provider.id, state.refreshing)}
-                >{state.refreshing ? 'Retrying…' : 'Retry'}</button
+                >{state.refreshing ? t('common.retrying') : t('common.retry')}</button
+              >
               >
             </span>
           </div>
@@ -519,11 +535,11 @@
             data-reorder-group={`dashboard-metrics:${provider.id}`}
             data-reorder-id={metric.id}
             role="group"
-            aria-label={`${metricDefinition(metric.id)?.label ?? metric.id} options`}
+            aria-label={t('dashboard.metricOptions', { label: metricTitle(metric.id) })}
             use:pointerReorder={{
               id: metric.id,
               group: `dashboard-metrics:${provider.id}`,
-              label: metricDefinition(metric.id)?.label ?? metric.id,
+              label: metricTitle(metric.id),
               touchGripOnly: true,
               onReorder: (targetId) => reorderMetricToTarget(metric.id, provider.id, targetId),
               onStart: onReorderStart,
@@ -537,7 +553,7 @@
               data-reorder-handle
               data-reorder-touch-handle
               type="button"
-              aria-label={`Move ${metricDefinition(metric.id)?.label ?? metric.id}`}
+              aria-label={t('dashboard.moveMetric', { label: metricTitle(metric.id) })}
               aria-describedby="reorder-instructions"
               aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
               ><Icon name="grip-lines" size={13} strokeWidth={2} /></button
@@ -559,7 +575,7 @@
             data-reorder-id="section:onDemand"
             type="button"
             aria-expanded={provider.expanded}
-            aria-label={provider.expanded ? 'Show less' : 'Show more'}
+            aria-label={provider.expanded ? t('dashboard.showLess') : t('dashboard.showMore')}
             onclick={() => toggleDemandMetrics(provider)}
           >
             <Icon
@@ -577,11 +593,11 @@
                   data-reorder-group={`dashboard-metrics:${provider.id}`}
                   data-reorder-id={metric.id}
                   role="group"
-                  aria-label={`${metricDefinition(metric.id)?.label ?? metric.id} options`}
+                  aria-label={t('dashboard.metricOptions', { label: metricTitle(metric.id) })}
                   use:pointerReorder={{
                     id: metric.id,
                     group: `dashboard-metrics:${provider.id}`,
-                    label: metricDefinition(metric.id)?.label ?? metric.id,
+                    label: metricTitle(metric.id),
                     touchGripOnly: true,
                     onReorder: (targetId) =>
                       reorderMetricToTarget(metric.id, provider.id, targetId),
@@ -596,7 +612,7 @@
                     data-reorder-handle
                     data-reorder-touch-handle
                     type="button"
-                    aria-label={`Move ${metricDefinition(metric.id)?.label ?? metric.id}`}
+                    aria-label={t('dashboard.moveMetric', { label: metricTitle(metric.id) })}
                     aria-describedby="reorder-instructions"
                     aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                     ><Icon name="grip-lines" size={13} strokeWidth={2} /></button
@@ -640,23 +656,32 @@
         type="button"
         role="menuitem"
         onclick={() => hideProvider(menuProvider.id)}
-        ><Icon name="power" size={15} />Hide {providerDisplayName(menuProvider.id)}</button
+        ><Icon name="power" size={15} />{t('dashboard.hideProvider', {
+          name: providerDisplayName(menuProvider.id),
+        })}</button
+      >
       >
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(menuProvider.id)}
-        ><Icon name="refresh" size={15} />Refresh {providerDisplayName(menuProvider.id)}</button
+        ><Icon name="refresh" size={15} />{t('dashboard.refreshProvider', {
+          name: providerDisplayName(menuProvider.id),
+        })}</button
+      >
       >
       {#if canRenameProvider(menuProvider.id, renamableProviderIds)}
         <button type="button" role="menuitem" onclick={() => onRenameProvider(menuProvider.id)}
-          ><Icon name="edit" size={15} />Rename…</button
+          ><Icon name="edit" size={15} />{t('dashboard.rename')}</button
+        >
         >
       {/if}
       <button type="button" role="menuitem" onclick={() => onOpenProviderCustomize(menuProvider.id)}
-        ><Icon name="sliders" size={15} />Customize…</button
+        ><Icon name="sliders" size={15} />{t('dashboard.customize')}</button
+      >
       >
       <hr />
       <button type="button" role="menuitem" onclick={() => onShare(menuProvider.id)}
-        ><Icon name="share" size={15} />Share Screenshot</button
+        ><Icon name="share" size={15} />{t('dashboard.shareScreenshot')}</button
+      >
       >
     </div>
   {/if}
@@ -680,7 +705,8 @@
         type="button"
         role="menuitem"
         onclick={() => patchMetric(metricProvider.id, menuMetric.id, { enabled: false })}
-        ><Icon name="power" size={15} />Hide</button
+        ><Icon name="power" size={15} />{t('common.hide')}</button
+      >
       >
       {#if metricDefinition(menuMetric.id)?.pinnable}
         <button
@@ -693,19 +719,24 @@
               pinned: !menuMetric.pinned,
             })}
           ><Icon name={menuMetric.pinned ? 'star-filled' : 'star'} size={15} />{menuMetric.pinned
-            ? 'Unstar'
-            : 'Star for menu bar'}</button
+            ? t('dashboard.unstar')
+            : t('dashboard.starForMenuBar')}</button
+        >
         >
       {/if}
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(metricProvider.id)}
-        ><Icon name="refresh" size={15} />Refresh {providerDisplayName(metricProvider.id)}</button
+        ><Icon name="refresh" size={15} />{t('dashboard.refreshProvider', {
+          name: providerDisplayName(metricProvider.id),
+        })}</button
+      >
       >
       <button
         type="button"
         role="menuitem"
         onclick={() => onOpenProviderCustomize(metricProvider.id)}
-        ><Icon name="sliders" size={15} />Customize…</button
+        ><Icon name="sliders" size={15} />{t('dashboard.customize')}</button
+      >
       >
     </div>
   {/if}
@@ -713,7 +744,7 @@
 
 {#if enabledProviders.length === 0}
   <section class="empty-dashboard">
-    <span>Turn on Customize to choose what to show.</span>
+    <span>{t('dashboard.empty')}</span>
   </section>
 {/if}
 

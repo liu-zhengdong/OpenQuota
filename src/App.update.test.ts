@@ -30,6 +30,7 @@ function mockInvoke(implementation: InvokeImplementation) {
         implementation('get_app_settings', args),
       ]).then(([usage, settings]) => ({ usage, settings, catalog: providerCatalog }));
     }
+    if (command === 'set_resolved_ui_locale') return Promise.resolve();
     return implementation(command, args);
   });
 }

@@ -1,4 +1,19 @@
 import '@testing-library/jest-dom/vitest';
+import { afterEach } from 'vitest';
+import { language } from '../lib/i18n';
+
+Object.defineProperty(navigator, 'language', {
+  configurable: true,
+  get: () => 'en-US',
+});
+Object.defineProperty(navigator, 'languages', {
+  configurable: true,
+  get: () => ['en-US'],
+});
+
+afterEach(() => {
+  language.resetForTests();
+});
 
 if (!window.matchMedia) {
   window.matchMedia = (query: string) =>

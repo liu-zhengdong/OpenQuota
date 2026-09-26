@@ -232,7 +232,7 @@ describe('share card layout', () => {
     expect(rows.map((row) => row.label)).toEqual([
       'Session',
       'Weekly',
-      'Extra Usage',
+      'Credits',
       'Rate Limit Resets',
     ]);
   });

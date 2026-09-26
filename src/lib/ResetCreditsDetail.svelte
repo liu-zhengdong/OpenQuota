@@ -2,7 +2,8 @@
   import { tick } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { claimCodexResetCredit } from './backend';
-  import { formatReset } from './pacing';
+  import { t } from './i18n';
+  import { formatResetDuration, formatResetWhen } from './pacing';
   import type { ResetClaimOutcome } from './types';
 
   interface Props {
@@ -37,32 +38,28 @@
           : remaining <= 7 * 24 * 60 * 60 * 1000
             ? 'warning'
             : 'normal';
-      const relative = formatReset(expiry, now, 'countdown', timeFormat).replace(
-        /^Resets(?: in)?\s*/,
-        '',
-      );
-      const exact = formatReset(expiry, now, 'exact', timeFormat).replace(/^Resets\s*/, '');
-      const imminent = relative === 'soon';
+      const relative = formatResetDuration(expiry, now);
+      const exact = formatResetWhen(expiry, now, timeFormat);
       return {
         id: `${expiry}:${index}`,
         expiry,
         number: index + 1,
         severity,
-        exact: imminent ? 'Expiring soon' : exact,
-        relative: imminent ? null : relative,
+        exact: relative ? exact : t('metrics.expiringSoon'),
+        relative,
       };
     }),
   );
 
   const resultMessage = $derived(
     result?.outcome === 'success'
-      ? 'Reset applied.'
+      ? t('metrics.resetApplied')
       : result?.outcome === 'nothingToReset'
-        ? 'No active limit needs resetting.'
+        ? t('metrics.nothingToReset')
         : result?.outcome === 'noCredit'
-          ? 'This reset is no longer available.'
+          ? t('metrics.resetGone')
           : result?.outcome === 'failed'
-            ? 'Could not use this reset. Try again.'
+            ? t('metrics.resetFailed')
             : null,
   );
 
@@ -132,7 +129,7 @@
   style={`top:${top}px`}
   role="dialog"
   tabindex="-1"
-  aria-label={`${title} details`}
+  aria-label={t('metrics.details', { title })}
   onmouseenter={onEnter}
   onfocusin={onEnter}
   onmouseleave={() => {
@@ -168,23 +165,23 @@
                   aria-labelledby={`reset-confirm-title-${index}`}
                   aria-describedby={`reset-confirm-message-${index}`}
                 >
-                  <strong id={`reset-confirm-title-${index}`}>Use this reset?</strong>
-                  <span id={`reset-confirm-message-${index}`}
-                    >Immediately reset your usage limits. This can't be undone.</span
-                  >
+                  <strong id={`reset-confirm-title-${index}`}>{t('metrics.useReset')}</strong>
+                  <span id={`reset-confirm-message-${index}`}>{t('metrics.useResetMessage')}</span>
                   <div>
                     <button
                       class="reset-confirm-primary"
                       type="button"
                       disabled={pendingExpiry !== null}
                       onclick={() => confirmClaim(entry.expiry)}
-                      >{pendingExpiry === entry.expiry ? 'Resetting…' : 'Use reset'}</button
+                      >{pendingExpiry === entry.expiry
+                        ? t('metrics.resetting')
+                        : t('metrics.useResetAction')}</button
                     >
                     <button
                       bind:this={cancelButton}
                       type="button"
                       disabled={pendingExpiry !== null}
-                      onclick={() => void cancelClaim()}>Cancel</button
+                      onclick={() => void cancelClaim()}>{t('common.cancel')}</button
                     >
                   </div>
                 </div>
@@ -197,9 +194,10 @@
                       class="reset-use"
                       type="button"
                       data-reset-trigger={index}
-                      aria-label={`Use reset expiring ${entry.exact}`}
+                      aria-label={t('metrics.useResetExpiring', { when: entry.exact })}
                       disabled={pendingExpiry !== null}
-                      onclick={() => void beginClaim(entry.expiry, index)}>Use</button
+                      onclick={() => void beginClaim(entry.expiry, index)}
+                      >{t('metrics.use')}</button
                     >
                   </div>
                 </div>
@@ -210,11 +208,11 @@
       </div>
     {:else if count > 0}
       <div class="reset-empty">
-        <strong>{count} available</strong>
-        <span>Expiry times unavailable</span>
+        <strong>{t('metrics.availableCount', { count })}</strong>
+        <span>{t('metrics.expiryTimesUnavailable')}</span>
       </div>
     {:else}
-      <div class="reset-empty"><span>No rate limit resets available</span></div>
+      <div class="reset-empty"><span>{t('metrics.noResets')}</span></div>
     {/if}
   </div>
 </div>

@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { PanelHeightMode } from './backend';
   import Icon from './Icon.svelte';
+  import { applyLanguagePreference, notifyBackendLocale } from './i18n/apply';
+  import { language, t } from './i18n';
   import type { DesktopPlatform } from './platform';
   import SelectMenu from './SelectMenu.svelte';
   import type {
@@ -47,10 +49,10 @@
   const settings = $derived(settingsView.settings);
   const revealLogLabel = $derived(
     platform === 'macos'
-      ? 'Reveal in Finder'
+      ? t('settings.revealInFinder')
       : platform === 'windows'
-        ? 'Reveal in File Explorer'
-        : 'Open Containing Folder',
+        ? t('settings.revealInExplorer')
+        : t('settings.openContainingFolder'),
   );
   const anyNotificationEnabled = $derived(
     settings.notifications.almostOut ||
@@ -64,6 +66,11 @@
   function patch(value: Partial<AppSettings>) {
     onChange({ ...settings, ...value });
   }
+  function patchLanguage(value: AppSettings['uiLanguage']) {
+    applyLanguagePreference(value);
+    notifyBackendLocale(language.locale);
+    patch({ uiLanguage: value });
+  }
   function patchNotification(key: keyof NotificationPreferences, enabled: boolean) {
     patch({ notifications: { ...settings.notifications, [key]: enabled } });
     if (enabled && settingsView.notificationPermission === 'prompt') onRequestNotifications();
@@ -73,7 +80,7 @@
       await onCopyLogPath();
       logActionError = null;
     } catch {
-      logActionError = "Couldn't copy the log path to the clipboard.";
+      logActionError = t('settings.copyLogFailed');
     }
   }
   async function revealLogFile() {
@@ -81,7 +88,7 @@
       await onOpenLogFolder();
       logActionError = null;
     } catch {
-      logActionError = "Couldn't reveal the log file.";
+      logActionError = t('settings.revealLogFailed');
     }
   }
   function record(event: KeyboardEvent) {
@@ -124,36 +131,51 @@
   }
 </script>
 
-<section class="screen settings-screen" aria-label="Settings">
+<section class="screen settings-screen" aria-label={t('settings.title')}>
   {#if settingsView.integrationError}<p class="notice" role="alert">
       {settingsView.integrationError}
     </p>{/if}
 
   {#if settingsView.platformSummary}<div class="settings-section">
-      <h2>Linux</h2>
+      <h2>{t('settings.linux')}</h2>
       <div class="setting-row">
-        <span><b>Desktop Integration</b><small>{settingsView.platformSummary}</small></span>
+        <span
+          ><b>{t('settings.desktopIntegration')}</b><small>{settingsView.platformSummary}</small
+          ></span
+        >
       </div>
     </div>{/if}
 
   <div class="settings-section">
-    <h2>General</h2>
+    <h2>{t('settings.general')}</h2>
+    <div class="setting-row">
+      <span><b>{t('settings.language')}</b></span><SelectMenu
+        label={t('settings.language')}
+        value={settings.uiLanguage}
+        options={[
+          { value: 'system', label: t('settings.languageFollowSystem') },
+          { value: 'en', label: t('settings.languageEnglish') },
+          { value: 'zh', label: t('settings.languageChinese') },
+        ]}
+        onChange={(value) => patchLanguage(value as AppSettings['uiLanguage'])}
+      />
+    </div>
     <label class="setting-row"
-      ><span><b>Launch at Login</b></span><input
+      ><span><b>{t('settings.launchAtLogin')}</b></span><input
         type="checkbox"
         checked={settings.launchAtLogin}
         onchange={(event) => patch({ launchAtLogin: event.currentTarget.checked })}
       /></label
     >
     <div class="setting-row">
-      <span><b>Global Shortcut</b></span>
+      <span><b>{t('settings.globalShortcut')}</b></span>
       <div class="shortcut-field">
         <button
           class:recording
           type="button"
           aria-pressed={recording}
           aria-describedby="shortcut-recording-help"
-          data-tooltip="Open OpenQuota from anywhere"
+          data-tooltip={t('settings.shortcutTooltip')}
           onclick={(e) => {
             // WKWebView 点击 <button> 不会给它焦点,必须手动 focus,
             // 否则后续 keydown 到不了按钮,快捷键录不上。
@@ -162,61 +184,61 @@
           }}
           onkeydown={record}
           onblur={() => (recording = false)}
-          >{recording ? 'Type Shortcut…' : (settings.globalShortcut ?? 'Record Shortcut')}</button
+          >{recording
+            ? t('settings.typeShortcut')
+            : (settings.globalShortcut ?? t('settings.recordShortcut'))}</button
         >{#if settings.globalShortcut}<button
+            class="shortcut-clear"
             type="button"
-            aria-label="Clear global shortcut"
+            aria-label={t('settings.clearShortcut')}
             onclick={() => patch({ globalShortcut: null })}
             ><Icon name="close" size={10} strokeWidth={2.2} /></button
           >{/if}
       </div>
-      <small id="shortcut-recording-help" class="sr-only"
-        >Activate to record. While recording, press a modifier shortcut to save it, Delete to clear
-        it, or Escape to cancel.</small
-      >
+      <small id="shortcut-recording-help" class="sr-only">{t('settings.shortcutHelp')}</small>
     </div>
   </div>
 
   <div class="settings-section">
-    <h2>Appearance</h2>
+    <h2>{t('settings.appearance')}</h2>
     {#if platform === 'macos'}
       <div class="setting-row">
-        <span><b>Icon Style</b></span><SelectMenu
-          label="Icon Style"
+        <span><b>{t('settings.iconStyle')}</b></span><SelectMenu
+          label={t('settings.iconStyle')}
           value={settings.menuBarStyle}
           options={[
-            { value: 'text', label: 'Text' },
-            { value: 'bars', label: 'Bars' },
+            { value: 'text', label: t('settings.iconText') },
+            { value: 'bars', label: t('settings.iconBars') },
           ]}
           onChange={(value) => patch({ menuBarStyle: value as AppSettings['menuBarStyle'] })}
         />
       </div>
     {/if}
     <div class="setting-row">
-      <span><b>Theme</b></span><SelectMenu
-        label="Theme"
+      <span><b>{t('settings.theme')}</b></span><SelectMenu
+        label={t('settings.theme')}
         value={settings.theme}
         options={[
-          { value: 'system', label: 'System' },
-          { value: 'light', label: 'Light' },
-          { value: 'dark', label: 'Dark' },
+          { value: 'system', label: t('settings.themeSystem') },
+          { value: 'light', label: t('settings.themeLight') },
+          { value: 'dark', label: t('settings.themeDark') },
         ]}
         onChange={(value) => patch({ theme: value as AppSettings['theme'] })}
       />
     </div>
     <div class="setting-row">
-      <span><b>Density</b></span><SelectMenu
-        label="Density"
+      <span><b>{t('settings.density')}</b></span><SelectMenu
+        label={t('settings.density')}
         value={settings.density}
         options={[
-          { value: 'default', label: 'Default' },
-          { value: 'compact', label: 'Compact' },
+          { value: 'default', label: t('settings.densityDefault') },
+          { value: 'compact', label: t('settings.densityCompact') },
         ]}
         onChange={(value) => patch({ density: value as AppSettings['density'] })}
       />
     </div>
     <label class="setting-row"
-      ><span><b>Reduce Animations</b></span><input
+      ><span><b>{t('settings.reduceAnimations')}</b></span><input
         type="checkbox"
         checked={settings.reduceAnimations}
         onchange={(event) => patch({ reduceAnimations: event.currentTarget.checked })}
@@ -224,36 +246,36 @@
     >
     {#if settingsView.trayAvailable}
       <div class="setting-row">
-        <span><b>Window Mode</b></span><SelectMenu
-          label="Window Mode"
+        <span><b>{t('settings.windowMode')}</b></span><SelectMenu
+          label={t('settings.windowMode')}
           value={settings.windowMode}
           options={[
-            { value: 'popup', label: 'Tray Popup' },
-            { value: 'floating', label: 'Floating Window' },
+            { value: 'popup', label: t('settings.windowTrayPopup') },
+            { value: 'floating', label: t('settings.windowFloating') },
           ]}
           onChange={(value) => patch({ windowMode: value as AppSettings['windowMode'] })}
         />
       </div>
     {/if}
     <div class="setting-row">
-      <span><b>Panel Height</b></span><SelectMenu
-        label="Panel Height"
+      <span><b>{t('settings.panelHeight')}</b></span><SelectMenu
+        label={t('settings.panelHeight')}
         value={panelHeightMode}
         options={[
-          { value: 'automatic', label: 'Automatic' },
-          { value: 'manual', label: 'Manual' },
+          { value: 'automatic', label: t('settings.panelAutomatic') },
+          { value: 'manual', label: t('settings.panelManual') },
         ]}
         onChange={(value) => onPanelHeightModeChange(value as PanelHeightMode)}
       />
     </div>
     <div class="setting-row">
-      <span><b>Time Format</b></span><SelectMenu
-        label="Time Format"
+      <span><b>{t('settings.timeFormat')}</b></span><SelectMenu
+        label={t('settings.timeFormat')}
         value={settings.timeFormat}
         options={[
-          { value: 'system', label: 'Auto' },
-          { value: 'twelveHour', label: '12-hour' },
-          { value: 'twentyFourHour', label: '24-hour' },
+          { value: 'system', label: t('settings.timeFormatAuto') },
+          { value: 'twelveHour', label: t('settings.timeFormat12') },
+          { value: 'twentyFourHour', label: t('settings.timeFormat24') },
         ]}
         onChange={(value) => patch({ timeFormat: value as AppSettings['timeFormat'] })}
       />
@@ -261,35 +283,35 @@
   </div>
 
   <div class="settings-section">
-    <h2>Usage Display</h2>
+    <h2>{t('settings.usageDisplay')}</h2>
     <div class="setting-row">
-      <span><b>Show Usage As</b></span><SelectMenu
-        label="Show Usage As"
+      <span><b>{t('settings.showUsageAs')}</b></span><SelectMenu
+        label={t('settings.showUsageAs')}
         value={settings.usageDisplay}
         options={[
-          { value: 'left', label: 'Left' },
-          { value: 'used', label: 'Used' },
+          { value: 'left', label: t('settings.usageLeft') },
+          { value: 'used', label: t('settings.usageUsed') },
         ]}
         onChange={(value) => patch({ usageDisplay: value as AppSettings['usageDisplay'] })}
       />
     </div>
     <div class="setting-row">
-      <span><b>Reset Times</b></span><SelectMenu
-        label="Reset Times"
+      <span><b>{t('settings.resetTimes')}</b></span><SelectMenu
+        label={t('settings.resetTimes')}
         value={settings.resetDisplay}
         options={[
-          { value: 'countdown', label: 'Countdown' },
-          { value: 'exact', label: 'Exact Time' },
+          { value: 'countdown', label: t('settings.resetCountdown') },
+          { value: 'exact', label: t('settings.resetExact') },
         ]}
         onChange={(value) => patch({ resetDisplay: value as AppSettings['resetDisplay'] })}
       />
     </div>
     <label class="setting-row"
       ><span
-        ><b>Always Show Pacing</b><i
+        ><b>{t('settings.alwaysShowPacing')}</b><i
           class="setting-info"
-          data-tooltip="Show how you're pacing on every metric, not just ones near their limit"
-          aria-label="Show how you're pacing on every metric, not just ones near their limit"
+          data-tooltip={t('settings.alwaysShowPacingHint')}
+          aria-label={t('settings.alwaysShowPacingHint')}
           ><Icon name="about" size={12} strokeWidth={1.8} /></i
         ></span
       ><input
@@ -302,14 +324,15 @@
 
   <div class="settings-section">
     <h2>
-      Notifications {#if notificationsNeedAttention}<span class="permission-warning">!</span>{/if}
+      {t('settings.notifications')}
+      {#if notificationsNeedAttention}<span class="permission-warning">!</span>{/if}
     </h2>
     <label class="setting-row"
       ><span
-        ><b>Almost Out</b><i
+        ><b>{t('settings.almostOut')}</b><i
           class="setting-info"
-          data-tooltip="Alert when a limit drops below 10% remaining."
-          aria-label="Alert when a limit drops below 10% remaining."
+          data-tooltip={t('settings.almostOutHint')}
+          aria-label={t('settings.almostOutHint')}
           ><Icon name="about" size={12} strokeWidth={1.8} /></i
         ></span
       ><input
@@ -320,10 +343,10 @@
     >
     <label class="setting-row"
       ><span
-        ><b>Cutting It Close</b><i
+        ><b>{t('settings.cuttingItClose')}</b><i
           class="setting-info"
-          data-tooltip="Alert when a limit is projected to finish with little left."
-          aria-label="Alert when a limit is projected to finish with little left."
+          data-tooltip={t('settings.cuttingItCloseHint')}
+          aria-label={t('settings.cuttingItCloseHint')}
           ><Icon name="about" size={12} strokeWidth={1.8} /></i
         ></span
       ><input
@@ -334,10 +357,10 @@
     >
     <label class="setting-row"
       ><span
-        ><b>Will Run Out</b><i
+        ><b>{t('settings.willRunOut')}</b><i
           class="setting-info"
-          data-tooltip="Alert when a limit is projected to finish before it resets."
-          aria-label="Alert when a limit is projected to finish before it resets."
+          data-tooltip={t('settings.willRunOutHint')}
+          aria-label={t('settings.willRunOutHint')}
           ><Icon name="about" size={12} strokeWidth={1.8} /></i
         ></span
       ><input
@@ -352,12 +375,12 @@
           <span
             ><b
               >{settingsView.notificationPermission === 'denied'
-                ? 'Notifications are blocked'
-                : 'Permission is required'}</b
+                ? t('settings.notificationsBlocked')
+                : t('settings.permissionRequired')}</b
             ><small
               >{settingsView.notificationPermission === 'denied'
-                ? 'Enable OpenQuota notifications in system settings.'
-                : 'Allow notifications to receive the alerts selected above.'}</small
+                ? t('settings.notificationsBlockedHint')
+                : t('settings.permissionRequiredHint')}</small
             ></span
           >
           <button
@@ -366,7 +389,9 @@
             onclick={settingsView.notificationPermission === 'denied'
               ? onOpenNotificationSettings
               : onRequestNotifications}
-            >{settingsView.notificationPermission === 'denied' ? 'Open Settings' : 'Allow'}</button
+            >{settingsView.notificationPermission === 'denied'
+              ? t('settings.openSettings')
+              : t('settings.allow')}</button
           >
         </div>
       </div>
@@ -374,23 +399,24 @@
   </div>
 
   <div class="settings-section">
-    <h2>Advanced</h2>
+    <h2>{t('settings.advanced')}</h2>
     <div class="setting-row">
-      <span><b>Log Level</b></span><SelectMenu
-        label="Log Level"
+      <span><b>{t('settings.logLevel')}</b></span><SelectMenu
+        label={t('settings.logLevel')}
         value={settings.logLevel}
         options={[
-          { value: 'error', label: 'Error' },
-          { value: 'warn', label: 'Warning' },
-          { value: 'info', label: 'Info' },
-          { value: 'debug', label: 'Debug' },
+          { value: 'error', label: t('settings.logError') },
+          { value: 'warn', label: t('settings.logWarning') },
+          { value: 'info', label: t('settings.logInfo') },
+          { value: 'debug', label: t('settings.logDebug') },
         ]}
         onChange={(value) => patch({ logLevel: value as AppSettings['logLevel'] })}
       />
     </div>
     <div class="setting-row setting-row--button">
       <button class="secondary-button settings-wide-button" type="button" onclick={copyLogPath}
-        >Copy Log Path</button
+        >{t('settings.copyLogPath')}</button
+      >
       >
     </div>
     <div class="setting-row setting-row--button">
@@ -405,15 +431,16 @@
       <button
         class="secondary-button settings-wide-button settings-reset-button"
         type="button"
-        onclick={onResetAllSettings}>Reset All Settings…</button
+        onclick={onResetAllSettings}>{t('settings.resetAllSettings')}</button
+      >
       >
     </div>
   </div>
 
   <div class="settings-section">
-    <h2>Updates</h2>
+    <h2>{t('settings.updates')}</h2>
     <label class="setting-row"
-      ><span><b>Check for Updates Automatically</b></span><input
+      ><span><b>{t('settings.autoCheckUpdates')}</b></span><input
         type="checkbox"
         checked={settings.autoCheckUpdates}
         onchange={(event) => patch({ autoCheckUpdates: event.currentTarget.checked })}
@@ -424,7 +451,9 @@
         type="button"
         class="secondary-button settings-wide-button"
         disabled={checkingUpdate}
-        onclick={onCheckForUpdates}>{checkingUpdate ? 'Checking…' : 'Check for Updates…'}</button
+        onclick={onCheckForUpdates}
+        >{checkingUpdate ? t('settings.checkingUpdates') : t('settings.checkForUpdates')}</button
+      >
       >
     </div>
     {#if updateError}<div class="settings-update-error" role="alert">
@@ -432,9 +461,14 @@
       </div>{/if}
   </div>
 
-  <button class="screen-cross-link" type="button" aria-label="Customize" onclick={onCustomize}>
+  <button
+    class="screen-cross-link"
+    type="button"
+    aria-label={t('settings.customizeTitle')}
+    onclick={onCustomize}
+  >
     <Icon name="sliders" size={17} />
-    <span><b>Customize</b><small>Choose what's visible and where</small></span>
+    <span><b>{t('settings.customizeTitle')}</b><small>{t('settings.customizeHint')}</small></span>
     <Icon name="chevron-right" size={13} strokeWidth={2.2} />
   </button>
 </section>
@@ -517,7 +551,7 @@
       color: var(--text);
     }
 
-    .shortcut-field button[aria-label='Clear global shortcut'] {
+    .shortcut-field button.shortcut-clear {
       display: grid;
       width: 24px;
       height: 24px;
@@ -527,8 +561,8 @@
       place-items: center;
     }
 
-    .shortcut-field button[aria-label='Clear global shortcut']:hover,
-    .shortcut-field button[aria-label='Clear global shortcut']:focus-visible {
+    .shortcut-field button.shortcut-clear:hover,
+    .shortcut-field button.shortcut-clear:focus-visible {
       outline: none;
       color: var(--text);
       background: var(--button-hover);
