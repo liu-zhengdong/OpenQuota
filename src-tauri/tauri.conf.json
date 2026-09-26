@@ -60,7 +60,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1MDJGRUM1QUY2QzgyRDQKUldUVWdteXZ4ZjRDUlFveldMMVAzOHNqcnhJNkdzVVo5YXpnSU5ZWk4zR3VkRUFTQVY3VWV6REgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQxRTg2M0EwM0E0QkVBN0EKUldSNjZrczZvR1BvUWViVUxnTW1sdGJRVlh6NWtGSnBFVHdTbFM5cUF6QzFJSkU2UU9Na0VRUlMK",
       "endpoints": [
         "https://github.com/liu-zhengdong/OpenQuota/releases/latest/download/latest.json"
       ]
