@@ -93,10 +93,13 @@ fn deliver(app: &AppHandle, alerts: &[PaceAlert]) -> Vec<PaceAlert> {
 }
 
 fn show(app: &AppHandle, locale: UiLocale, title: &str, body: &str) -> Result<(), String> {
+    let open_label = t(locale, "notifications.openAction");
     let mut notification = notify_rust::Notification::new();
     notification.summary(title).body(body).appname("OpenQuota");
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    notification.action("default", t(locale, "notifications.openAction"));
+    notification.action("default", open_label);
+    #[cfg(target_os = "windows")]
+    let _ = open_label;
     #[cfg(target_os = "windows")]
     notification.app_id(&app.config().identifier);
     #[cfg(target_os = "macos")]
