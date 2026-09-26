@@ -184,3 +184,7 @@ export function onMainWindowHidden(handler: PayloadHandler<void>) {
 export function onUpdateProgress(handler: PayloadHandler<UpdateProgress>) {
   return onEvent('update-progress', handler);
 }
+
+export function setResolvedUiLocale(locale: 'en' | 'zh') {
+  return invoke<void>('set_resolved_ui_locale', { locale });
+}

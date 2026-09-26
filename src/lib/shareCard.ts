@@ -1,3 +1,5 @@
+import { t, windowLabel } from './i18n';
+import { metricLabel, usageWord } from './i18n/labels';
 import type { ProviderCatalogIndex } from './metrics';
 import { formatMetricValue } from './metricFormat';
 import { formatLimit, formatReset, projectPace } from './pacing';
@@ -85,14 +87,14 @@ export function buildProviderShareRows(
         const valueMetric = snapshot.valueMetrics.find((item) => item.id === source.sourceId);
         rows.push({
           kind: 'text',
-          label: definition.label,
+          label: metricLabel(definition),
           value: valueMetric
             ? valueMetric.values
                 .map((value) =>
                   formatMetricValue(value.number, value.kind, 'row', value.label ?? undefined),
                 )
                 .join(' · ')
-            : 'No data',
+            : t('common.noData'),
           condensed: previousTextSection === metric.section,
         });
         previousTextSection = metric.section;
@@ -100,9 +102,9 @@ export function buildProviderShareRows(
       } else {
         rows.push({
           kind: 'quota',
-          label: definition.label,
-          reading: 'No data',
-          trailing: 'Reset unavailable',
+          label: metricLabel(definition),
+          reading: t('common.noData'),
+          trailing: t('common.resetUnavailable'),
           fillPercent: 0,
           severity: 'normal',
           paceLabel: null,
@@ -116,8 +118,8 @@ export function buildProviderShareRows(
       const statusMetric = snapshot.statusMetrics.find((item) => item.id === source.sourceId);
       rows.push({
         kind: 'text',
-        label: definition.label,
-        value: statusMetric?.text ?? 'No data',
+        label: metricLabel(definition),
+        value: statusMetric?.text ?? t('common.noData'),
         condensed: previousTextSection === metric.section,
       });
       previousTextSection = metric.section;
@@ -128,14 +130,14 @@ export function buildProviderShareRows(
       const valueMetric = snapshot.valueMetrics.find((item) => item.id === source.sourceId);
       rows.push({
         kind: 'text',
-        label: definition.label,
+        label: metricLabel(definition),
         value: valueMetric
           ? valueMetric.values
               .map((value) =>
                 formatMetricValue(value.number, value.kind, 'row', value.label ?? undefined),
               )
               .join(' · ')
-          : 'No data',
+          : t('common.noData'),
         condensed: previousTextSection === metric.section,
       });
       previousTextSection = metric.section;
@@ -203,21 +205,31 @@ export function renderProviderShareCard(
 function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): ShareRow {
   const used = clamp(quota.usedPercent, 0, 100);
   const remaining = Math.max(0, 100 - used);
-  let reading = `${(settings.usageDisplay === 'used' ? used : remaining).toFixed(0)}% ${settings.usageDisplay}`;
+  let reading = t('metrics.percentReading', {
+    percent: (settings.usageDisplay === 'used' ? used : remaining).toFixed(0),
+    direction: usageWord(settings.usageDisplay),
+  });
   let fillPercent = settings.usageDisplay === 'used' ? used : remaining;
   if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
     const displayed =
       settings.usageDisplay === 'left'
         ? Math.max(0, quota.limitValue - quota.usedValue)
         : quota.usedValue;
-    reading = `${displayed.toFixed(0)} ${quota.unit?.trim() || 'requests'} ${settings.usageDisplay}`;
+    reading = t('metrics.countReading', {
+      value: displayed.toFixed(0),
+      unit: quota.unit?.trim() || t('common.requests'),
+      direction: usageWord(settings.usageDisplay),
+    });
   }
   if (quota.format === 'dollars' && quota.usedValue !== null) {
     const displayed =
       settings.usageDisplay === 'left' && quota.limitValue !== null
         ? Math.max(0, quota.limitValue - quota.usedValue)
         : quota.usedValue;
-    reading = `$${displayed.toFixed(2)} ${settings.usageDisplay === 'left' ? 'left' : 'spent'}`;
+    reading =
+      settings.usageDisplay === 'left'
+        ? t('metrics.dollarsLeft', { value: displayed.toFixed(2) })
+        : t('metrics.dollarsSpent', { value: displayed.toFixed(2) });
     if (quota.limitValue !== null && quota.limitValue > 0) {
       fillPercent = (displayed / quota.limitValue) * 100;
     }
@@ -236,20 +248,24 @@ function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): 
             : 'normal';
   const paceLabel =
     pace.severity === 'spent'
-      ? 'Limit reached'
+      ? t('metrics.limitReached')
       : pace.severity === 'runningOut'
         ? formatLimit(pace.runOutAt, now, settings.resetDisplay, settings.timeFormat)
         : pace.severity === 'close' && pace.projectedUsedPercent !== null
-          ? `~${Math.max(1, Math.round(100 - pace.projectedUsedPercent))}% spare`
+          ? t('metrics.sparePercent', {
+              percent: Math.max(1, Math.round(100 - pace.projectedUsedPercent)),
+            })
           : pace.severity === 'healthy' &&
               settings.alwaysShowPacing &&
               pace.projectedUsedPercent !== null
-            ? `~${Math.max(0, Math.round(100 - pace.projectedUsedPercent))}% left at reset`
+            ? t('metrics.healthyPace', {
+                percent: Math.max(0, Math.round(100 - pace.projectedUsedPercent)),
+              })
             : null;
 
   return {
     kind: 'quota',
-    label: quota.label,
+    label: windowLabel(quota.id, quota.label),
     reading,
     trailing: formatReset(quota.resetsAt, now, settings.resetDisplay, settings.timeFormat),
     fillPercent: clamp(fillPercent, 0, 100),

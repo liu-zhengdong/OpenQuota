@@ -8,6 +8,8 @@
   import ProviderNameSection from './ProviderNameSection.svelte';
   import { reorderFlip } from './motion';
   import { pointerReorder } from './pointerReorder';
+  import { t } from './i18n';
+  import { metricLabel } from './i18n/labels';
   import { canRenameProvider } from './providerNames';
 
   interface Props {
@@ -34,6 +36,10 @@
   }: Props = $props();
   const metricDefinition = (id: string) => catalog.metric(id);
   const providerDisplayName = (id: string) => catalog.displayName(id, settings.providerNames);
+  function metricTitle(id: string) {
+    const definition = metricDefinition(id);
+    return definition ? metricLabel(definition) : id;
+  }
   let message = $state('');
   let messageKind = $state<'success' | 'denied'>('success');
   let messageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -58,7 +64,7 @@
   function togglePin(metric: MetricLayout, button: HTMLButtonElement) {
     if (!provider || !metricDefinition(metric.id)?.pinnable) return;
     if (!metric.pinned && provider.metrics.filter((item) => item.pinned).length >= 2) {
-      showMessage('Up to 2 stars per provider', 'denied');
+      showMessage(t('customize.pinLimit'), 'denied');
       if (!reducedMotion) {
         button.animate?.(
           [
@@ -75,7 +81,7 @@
       }
       return;
     }
-    showMessage(metric.pinned ? 'Removed from menu bar' : 'Starred for menu bar', 'success');
+    showMessage(metric.pinned ? t('customize.unstarred') : t('customize.starred'), 'success');
     updateMetric({ ...metric, pinned: !metric.pinned });
   }
   function showMessage(text: string, kind: 'success' | 'denied') {
@@ -120,7 +126,7 @@
 {#if provider}
   <section
     class="screen customize-detail"
-    aria-label={`Customize ${providerDisplayName(provider.id)}`}
+    aria-label={t('customize.customizeProviderNamed', { name: providerDisplayName(provider.id) })}
   >
     {#if canRenameProvider(provider.id, renamableProviderIds)}
       <ProviderNameSection {settings} {provider} {catalog} onChange={onNameChange} />
@@ -130,9 +136,13 @@
       <div
         class="metric-section"
         role="group"
-        aria-label={section === 'alwaysVisible' ? 'Always Visible metrics' : 'On Demand metrics'}
+        aria-label={section === 'alwaysVisible'
+          ? t('customize.alwaysVisibleMetrics')
+          : t('customize.onDemandMetrics')}
       >
-        <h2>{section === 'alwaysVisible' ? 'Always Visible' : 'On Demand'}</h2>
+        <h2>
+          {section === 'alwaysVisible' ? t('customize.alwaysVisible') : t('customize.onDemand')}
+        </h2>
         <div class="metric-list" role="list">
           {#if sectionMetrics.length === 0}
             <div
@@ -141,7 +151,7 @@
               data-reorder-group={`customize-metrics:${provider.id}`}
               data-reorder-id={`section:${section}`}
             >
-              Drag metrics here
+              {t('customize.dragMetricsHere')}
             </div>
           {/if}
           {#each sectionMetrics as metric (metric.id)}
@@ -154,7 +164,7 @@
               use:pointerReorder={{
                 id: metric.id,
                 group: `customize-metrics:${provider.id}`,
-                label: metricDefinition(metric.id)?.label ?? metric.id,
+                label: metricTitle(metric.id),
                 gripOnly: true,
                 touchGripOnly: true,
                 onReorder: (targetId) => {
@@ -176,20 +186,20 @@
                 data-reorder-touch-handle
                 role="button"
                 tabindex="0"
-                aria-label={`Move ${metricDefinition(metric.id)?.label ?? metric.id}`}
+                aria-label={t('customize.moveMetric', { label: metricTitle(metric.id) })}
                 aria-describedby="reorder-instructions"
                 aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                 ><Icon name="grip-lines" size={16} strokeWidth={2} /></span
               >
-              <span class="customize-metric-name"
-                >{metricDefinition(metric.id)?.label ?? metric.id}</span
-              >
+              <span class="customize-metric-name">{metricTitle(metric.id)}</span>
               <span class="customize-metric-pin-slot">
                 {#if metricDefinition(metric.id)?.pinnable}<button
                     class:pinned={metric.pinned}
                     class="pin-button"
                     type="button"
-                    aria-label={`${metric.pinned ? 'Unpin' : 'Pin'} ${metricDefinition(metric.id)?.label}`}
+                    aria-label={metric.pinned
+                      ? t('customize.unpinMetric', { label: metricTitle(metric.id) })
+                      : t('customize.pinMetric', { label: metricTitle(metric.id) })}
                     onclick={(event) => togglePin(metric, event.currentTarget)}
                     ><Icon
                       name={metric.pinned ? 'star-filled' : 'star'}
@@ -200,7 +210,7 @@
               </span>
               <label class="switch"
                 ><input
-                  aria-label={`Show ${metricDefinition(metric.id)?.label ?? metric.id}`}
+                  aria-label={t('customize.showMetric', { label: metricTitle(metric.id) })}
                   type="checkbox"
                   checked={metric.enabled}
                   onchange={(event) =>

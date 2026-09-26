@@ -3,6 +3,7 @@ mod cli;
 mod commands;
 mod desktop_integration;
 mod hashing;
+mod i18n;
 mod logging;
 #[cfg(any(target_os = "macos", test))]
 mod menu_bar;
@@ -19,6 +20,7 @@ mod settings;
 mod storage;
 #[cfg(any(not(target_os = "macos"), test))]
 mod tray_icon;
+mod tray_menu;
 mod tray_presentation;
 mod updates;
 mod webview_memory;
@@ -35,17 +37,14 @@ use settings::{CredentialDetectionPlan, SettingsService};
 use tauri::menu::ContextMenu;
 #[cfg(not(target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::{
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    App, AppHandle, Emitter, Manager,
-};
+use tauri::{menu::MenuEvent, tray::TrayIconBuilder, App, AppHandle, Emitter, Manager};
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::{
     desktop_integration::DesktopIntegration,
+    i18n::UiLocaleState,
     pacing::NotificationEvaluator,
     providers::{
         antigravity::AntigravityProvider, claude, codex::reset_claim::CodexResetClaimService,
@@ -82,23 +81,9 @@ fn handle_tray_menu_event(app: &AppHandle, event: &MenuEvent) {
 }
 
 fn install_tray(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "macos")]
-    let menu = {
-        let settings_item =
-            MenuItem::with_id(app, "settings", "Settings", true, Some("CmdOrCtrl+,"))?;
-        let separator = PredefinedMenuItem::separator(app)?;
-        let quit = MenuItem::with_id(app, "quit", "Quit OpenQuota", true, Some("CmdOrCtrl+Q"))?;
-        Menu::with_items(app, &[&settings_item, &separator, &quit])?
-    };
-    #[cfg(not(target_os = "macos"))]
-    let menu = {
-        let open = MenuItem::with_id(app, "open", "Open OpenQuota", true, None::<&str>)?;
-        let customize = MenuItem::with_id(app, "customize", "Customize…", true, None::<&str>)?;
-        let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-        let separator = PredefinedMenuItem::separator(app)?;
-        let quit = MenuItem::with_id(app, "quit", "Quit OpenQuota", true, None::<&str>)?;
-        Menu::with_items(app, &[&open, &customize, &settings_item, &separator, &quit])?
-    };
+    let locale = app.state::<UiLocaleState>().get();
+    let (menu, handles) = tray_menu::build(app, locale)?;
+    app.manage(handles);
 
     let icon = app
         .default_window_icon()
@@ -440,6 +425,7 @@ pub fn run() {
                 logging::current_level().log_label()
             );
             let notifications = Arc::new(NotificationEvaluator::default());
+            app.manage(UiLocaleState::from_preference(settings.get().ui_language));
             app.manage(registry.clone());
             app.manage(service.clone());
             app.manage(settings.clone());
@@ -537,6 +523,7 @@ pub fn run() {
             commands::settings::open_notification_settings,
             commands::settings::get_log_path,
             commands::settings::open_log_folder,
+            commands::settings::set_resolved_ui_locale,
             commands::window::dismiss_main_window,
             commands::window::get_panel_resize_edge,
             commands::window::get_panel_height_mode,

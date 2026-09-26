@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from './i18n';
+  import { metricLabel } from './i18n/labels';
   import { type ProviderCatalogIndex } from './metrics';
   import QuotaMetric from './QuotaMetric.svelte';
   import StatusMetric from './StatusMetric.svelte';
@@ -15,6 +17,7 @@
   }
   let { layout, snapshot, settings, now, catalog, onSettingsChange }: Props = $props();
   const definition = $derived(catalog.metric(layout.id));
+  const title = $derived(definition ? metricLabel(definition) : layout.id);
   const quota = $derived.by(() => {
     const source = definition?.source;
     if (source?.kind !== 'quota' && source?.kind !== 'quotaOrValue') return undefined;
@@ -58,32 +61,34 @@
   />
 {:else if definition?.source.kind === 'quotaOrValue' && valueMetric}
   <ValueMetric
-    label={definition.label}
+    label={title}
     metric={valueMetric}
     {now}
     resetDisplay={settings.resetDisplay}
     timeFormat={settings.timeFormat}
   />
 {:else if definition?.source.kind === 'quota' || definition?.source.kind === 'quotaOrValue'}
-  <section class="metric metric--no-data" aria-label={`${definition.label} quota`}>
-    <div class="metric__heading"><h2>{definition.label}</h2></div>
+  <section class="metric metric--no-data" aria-label={t('metrics.quotaAria', { label: title })}>
+    <div class="metric__heading"><h2>{title}</h2></div>
     <div class="meter-shell">
       <div
         class="meter"
         role="progressbar"
-        aria-label={`${definition.label} used`}
+        aria-label={t('metrics.usedAria', { label: title })}
         aria-valuemin="0"
         aria-valuemax="100"
         aria-valuenow="0"
       ></div>
     </div>
-    <div class="metric__reading"><span>No data</span><span>Reset unavailable</span></div>
+    <div class="metric__reading">
+      <span>{t('common.noData')}</span><span>{t('common.resetUnavailable')}</span>
+    </div>
   </section>
 {:else if definition?.source.kind === 'status'}
-  <StatusMetric label={definition.label} metric={statusMetric} />
+  <StatusMetric label={title} metric={statusMetric} />
 {:else if definition?.source.kind === 'value'}
   <ValueMetric
-    label={definition.label}
+    label={title}
     metric={valueMetric}
     {now}
     resetDisplay={settings.resetDisplay}

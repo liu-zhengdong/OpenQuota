@@ -14,14 +14,15 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{
     apply_shortcut_change, autostart_is_enabled, child_process,
     desktop_integration::DesktopIntegration,
-    models::{AppSettings, SettingsViewState},
+    i18n::{UiLocale, UiLocaleState},
+    models::{AppSettings, SettingsViewState, UiLanguagePreference},
     notifications::{finish_refresh, permission as notification_permission},
     pacing::NotificationEvaluator,
     providers::{detect_local_credentials, ProviderRegistry},
     service::ProviderService,
     set_autostart,
     settings::{CredentialDetectionPlan, SettingsService},
-    tray_presentation,
+    tray_menu, tray_presentation,
     window::PanelResizeSession,
 };
 
@@ -166,6 +167,7 @@ async fn save_app_settings_inner(
         }
     }
     crate::app_debug!("config", "application settings persisted");
+    sync_locale_from_preference(&app, updated.ui_language);
     tray_presentation::update(
         &app,
         &service.state(),
@@ -347,6 +349,35 @@ fn spawn_provider_reseed(
         finish_refresh(&app, &usage_state, &settings, &notifications);
         let _ = app.emit("settings-state", settings_view_state(&app, &settings));
     });
+}
+
+#[tauri::command]
+pub fn set_resolved_ui_locale(app: AppHandle, locale: String) -> Result<(), String> {
+    let parsed = UiLocale::parse(&locale)?;
+    let Some(state) = app.try_state::<UiLocaleState>() else {
+        return Ok(());
+    };
+    if state.set(parsed) {
+        tray_menu::refresh_for_app(&app, parsed);
+    }
+    Ok(())
+}
+
+fn sync_locale_from_preference(app: &AppHandle, preference: UiLanguagePreference) {
+    let Some(state) = app.try_state::<UiLocaleState>() else {
+        return;
+    };
+    match preference {
+        UiLanguagePreference::En => {
+            let _ = state.set(UiLocale::En);
+            tray_menu::refresh_for_app(app, UiLocale::En);
+        }
+        UiLanguagePreference::Zh => {
+            let _ = state.set(UiLocale::Zh);
+            tray_menu::refresh_for_app(app, UiLocale::Zh);
+        }
+        UiLanguagePreference::System => tray_menu::refresh_from_state(app),
+    }
 }
 
 fn newly_enabled_provider_ids(previous: &AppSettings, next: &AppSettings) -> Vec<String> {

@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { deleteProviderApiKey, getProviderApiKeyState, saveProviderApiKey } from './backend';
   import Icon from './Icon.svelte';
+  import { t } from './i18n';
   import ProviderIcon from './ProviderIcon.svelte';
   import type { ApiKeyStatus, ProviderApiKeyState } from './types';
 
@@ -30,13 +31,13 @@
   const canClear = $derived(status === 'saved' || status === 'overrideActive');
   const sourceLabel = $derived(
     status === 'fromEnvironment'
-      ? 'From Your Environment'
+      ? t('apiKey.fromEnvironment')
       : status === 'fromConfig'
-        ? 'From Config File'
+        ? t('apiKey.fromConfig')
         : status === 'saved'
-          ? 'Saved securely'
+          ? t('apiKey.savedSecurely')
           : status === 'overrideActive'
-            ? 'Custom Key'
+            ? t('apiKey.customKey')
             : '',
   );
 
@@ -84,7 +85,7 @@
       await tick();
       editorToggle?.focus();
     } catch (cause) {
-      error = errorMessage(cause, 'The API key could not be saved.');
+      error = errorMessage(cause, t('errors.apiKeySaveFailed'));
     } finally {
       saving = false;
     }
@@ -104,7 +105,7 @@
       await tick();
       editorToggle?.focus();
     } catch (cause) {
-      error = errorMessage(cause, 'The saved API key could not be removed.');
+      error = errorMessage(cause, t('errors.apiKeyRemoveFailed'));
     } finally {
       saving = false;
     }
@@ -140,21 +141,26 @@
       })
       .catch((cause) => {
         supported = true;
-        availabilityError = errorMessage(cause, 'The system credential store is unavailable.');
+        availabilityError = errorMessage(cause, t('errors.credentialStoreUnavailable'));
       });
   });
 </script>
 
 {#if supported}
-  <section class="api-key-section" aria-label={`${providerName} API Key`}>
-    <h2>API Key</h2>
+  <section class="api-key-section" aria-label={t('apiKey.section', { name: providerName })}>
+    <h2>{t('apiKey.title')}</h2>
     <div class="api-key-card">
       <div class="api-key-summary">
         <ProviderIcon {providerId} size={18} />
         <span class="api-key-provider">{providerName}</span>
         <i class:missing={status === 'notSet'} aria-hidden="true"></i>
         <button bind:this={editorToggle} type="button" onclick={toggleOpen}
-          >{open ? 'Done' : status === 'notSet' ? 'Add' : 'Edit'}</button
+          >{open
+            ? t('apiKey.done')
+            : status === 'notSet'
+              ? t('apiKey.add')
+              : t('apiKey.edit')}</button
+        >
         >
       </div>
       {#if availabilityError}
@@ -170,14 +176,14 @@
                   bind:value={apiKey}
                   autocomplete="off"
                   spellcheck="false"
-                  placeholder="Paste API key"
-                  aria-label={`${providerName} API key`}
+                  placeholder={t('apiKey.paste')}
+                  aria-label={t('apiKey.field', { name: providerName })}
                   disabled={saving}
                 />
                 <button
                   class="field-icon"
                   type="button"
-                  aria-label={revealInput ? 'Hide API key' : 'Show API key'}
+                  aria-label={revealInput ? t('apiKey.hide') : t('apiKey.show')}
                   onclick={() => (revealInput = !revealInput)}
                 >
                   <Icon name={revealInput ? 'eye-off' : 'eye'} size={15} />
@@ -188,10 +194,12 @@
                   class="primary"
                   type="button"
                   disabled={!apiKey.trim() || saving}
-                  onclick={save}>{saving ? 'Saving…' : 'Save'}</button
+                  onclick={save}>{saving ? t('common.saving') : t('common.save')}</button
                 >
                 {#if overrideExternal}
-                  <button type="button" disabled={saving} onclick={resetEditor}>Cancel</button>
+                  <button type="button" disabled={saving} onclick={resetEditor}
+                    >{t('common.cancel')}</button
+                  >
                 {/if}
               </div>
             {:else}
@@ -204,8 +212,8 @@
                     disabled={saving || confirmingRemoval}
                     aria-controls={`remove-api-key-${providerId}`}
                     aria-expanded={confirmingRemoval}
-                    aria-label="Remove saved API key"
-                    title="Remove saved API key"
+                    aria-label={t('apiKey.remove')}
+                    title={t('apiKey.remove')}
                     onclick={() => void requestRemoval()}
                   >
                     <Icon name="clear-filled" size={16} strokeWidth={1.8} />
@@ -215,7 +223,7 @@
                   class="api-key-source-field"
                   type="text"
                   use:displayValue={sourceLabel}
-                  aria-label={`${providerName} API key source`}
+                  aria-label={t('apiKey.source', { name: providerName })}
                   disabled
                 />
               </div>
@@ -227,9 +235,11 @@
                   aria-labelledby={`remove-api-key-title-${providerId}`}
                   aria-describedby={`remove-api-key-message-${providerId}`}
                 >
-                  <strong id={`remove-api-key-title-${providerId}`}>Remove saved API key?</strong>
+                  <strong id={`remove-api-key-title-${providerId}`}
+                    >{t('apiKey.removeTitle')}</strong
+                  >
                   <span id={`remove-api-key-message-${providerId}`}
-                    >The saved key will be removed from secure storage. This can't be undone.</span
+                    >{t('apiKey.removeMessage')}</span
                   >
                   <div class="api-key-remove-actions">
                     <button
@@ -237,14 +247,16 @@
                       type="button"
                       disabled={saving}
                       onkeydown={handleRemovalKeydown}
-                      onclick={() => void cancelRemoval()}>Cancel</button
+                      onclick={() => void cancelRemoval()}>{t('common.cancel')}</button
                     >
                     <button
                       class="destructive"
                       type="button"
                       disabled={saving}
                       onkeydown={handleRemovalKeydown}
-                      onclick={() => void remove()}>{saving ? 'Removing…' : 'Remove key'}</button
+                      onclick={() => void remove()}
+                      >{saving ? t('apiKey.removing') : t('apiKey.removeKey')}</button
+                    >
                     >
                   </div>
                 </div>
@@ -252,7 +264,7 @@
               {#if status === 'fromEnvironment' || status === 'fromConfig'}
                 <label class="api-key-override">
                   <input type="checkbox" bind:checked={overrideExternal} disabled={saving} />
-                  Override With a Custom Key
+                  {t('apiKey.override')}
                 </label>
               {/if}
             {/if}

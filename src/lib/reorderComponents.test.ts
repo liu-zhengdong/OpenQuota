@@ -19,6 +19,7 @@ const settings: AppSettings = {
   usageDisplay: 'left',
   resetDisplay: 'countdown',
   timeFormat: 'system',
+  uiLanguage: 'system',
   providerSort: 'custom',
   alwaysShowPacing: false,
   launchAtLogin: false,

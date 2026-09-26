@@ -525,6 +525,16 @@ pub enum TimeFormatPreference {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum UiLanguagePreference {
+    En,
+    Zh,
+    #[default]
+    #[serde(other)]
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum ProviderSort {
     Spare,
     #[default]
@@ -596,6 +606,7 @@ pub struct AppSettings {
     pub usage_display: UsageDisplay,
     pub reset_display: ResetDisplay,
     pub time_format: TimeFormatPreference,
+    pub ui_language: UiLanguagePreference,
     pub provider_sort: ProviderSort,
     pub always_show_pacing: bool,
     pub launch_at_login: bool,
@@ -623,6 +634,7 @@ impl Default for AppSettings {
             usage_display: UsageDisplay::Left,
             reset_display: ResetDisplay::Countdown,
             time_format: TimeFormatPreference::System,
+            ui_language: UiLanguagePreference::System,
             provider_sort: ProviderSort::Custom,
             always_show_pacing: false,
             launch_at_login: false,
@@ -678,6 +690,7 @@ mod tests {
         object.remove("windowMode");
         object.remove("reduceAnimations");
         object.remove("providerSort");
+        object.remove("uiLanguage");
 
         let settings: AppSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.dismissed_update_version, None);
@@ -687,6 +700,7 @@ mod tests {
         assert_eq!(settings.window_mode, WindowMode::Popup);
         assert!(!settings.reduce_animations);
         assert_eq!(settings.provider_sort, ProviderSort::Custom);
+        assert_eq!(settings.ui_language, super::UiLanguagePreference::System);
     }
 
     #[test]
@@ -718,6 +732,14 @@ mod tests {
         value["windowMode"] = serde_json::json!("detached");
         let settings: AppSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.window_mode, WindowMode::Popup);
+    }
+
+    #[test]
+    fn unknown_persisted_ui_languages_follow_the_system() {
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value["uiLanguage"] = serde_json::json!("ja");
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.ui_language, super::UiLanguagePreference::System);
     }
 
     #[test]
