@@ -10,6 +10,7 @@
   import Icon from './Icon.svelte';
   import MetricRenderer from './MetricRenderer.svelte';
   import type { ProviderCatalogIndex } from './metrics';
+  import { selectComparisonWindow, sparePercent } from './pacing';
   import { canRenameProvider } from './providerNames';
   import type {
     AppSettings,
@@ -103,8 +104,9 @@
   const enabledProviders = $derived(
     settings.providers.filter((provider) => provider.enabled && catalog.provider(provider.id)),
   );
-  const dashboardProviders = $derived(
-    enabledProviders.map((provider) => {
+  const sortedBySpare = $derived(settings.providerSort === 'spare');
+  const dashboardProviders = $derived.by(() => {
+    const entries = enabledProviders.map((provider) => {
       const state = viewState.providers[provider.id];
       return {
         provider,
@@ -118,8 +120,21 @@
         ),
         links: catalog.provider(provider.id)?.links ?? [],
       };
-    }),
-  );
+    });
+    if (!sortedBySpare) return entries;
+    return entries
+      .map((entry) => ({
+        entry,
+        spare: sparePercent(selectComparisonWindow(entry.snapshot.quotas), now),
+      }))
+      .sort((left, right) => {
+        if (left.spare === null && right.spare === null) return 0;
+        if (left.spare === null) return 1;
+        if (right.spare === null) return -1;
+        return right.spare - left.spare;
+      })
+      .map(({ entry }) => entry);
+  });
   function updateProvider(next: ProviderLayout, customization = true) {
     const changed = {
       ...settings,
@@ -404,6 +419,7 @@
         label: providerDisplayName(provider.id),
         gripOnly: true,
         touchGripOnly: true,
+        disabled: sortedBySpare,
         onReorder: (targetId) => reorderProvider(provider.id, targetId),
         onStart: onReorderStart,
         onEnd: onReorderEnd,
@@ -412,20 +428,25 @@
     >
       <header
         class="provider-header"
+        class:provider-header--sorted={sortedBySpare}
         data-reorder-handle
         role="group"
-        aria-label={`Drag ${providerDisplayName(provider.id)} to reorder`}
+        aria-label={sortedBySpare
+          ? `${providerDisplayName(provider.id)} provider, sorted by spare`
+          : `Drag ${providerDisplayName(provider.id)} to reorder`}
       >
-        <span
-          class="drag-grip"
-          data-reorder-handle
-          data-reorder-touch-handle
-          role="button"
-          tabindex="0"
-          aria-label={`Move ${providerDisplayName(provider.id)}`}
-          aria-describedby="reorder-instructions"
-          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><Icon name="grip-dots" size={13} /></span
-        >
+        {#if !sortedBySpare}
+          <span
+            class="drag-grip"
+            data-reorder-handle
+            data-reorder-touch-handle
+            role="button"
+            tabindex="0"
+            aria-label={`Move ${providerDisplayName(provider.id)}`}
+            aria-describedby="reorder-instructions"
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><Icon name="grip-dots" size={13} /></span
+          >
+        {/if}
         <h1>{providerDisplayName(provider.id)}</h1>
         {#if snapshot.plan}<span class="plan">{snapshot.plan}</span>{/if}
         {#if state?.snapshot && state.stale}<span
@@ -1115,6 +1136,11 @@
 
     .provider-header:active {
       cursor: grabbing;
+    }
+
+    .provider-header--sorted,
+    .provider-header--sorted:active {
+      cursor: default;
     }
 
     .provider-header h1 {

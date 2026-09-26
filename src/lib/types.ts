@@ -168,6 +168,7 @@ export interface AppSettings {
   usageDisplay: 'used' | 'left';
   resetDisplay: 'countdown' | 'exact';
   timeFormat: 'system' | 'twelveHour' | 'twentyFourHour';
+  providerSort: 'custom' | 'spare';
   alwaysShowPacing: boolean;
   launchAtLogin: boolean;
   autoCheckUpdates: boolean;

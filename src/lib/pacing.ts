@@ -50,6 +50,36 @@ export function projectPace(window: QuotaWindow, now: number): PaceProjection {
   };
 }
 
+/**
+ * Window used to compare a provider against an even pace: the weekly percent
+ * window when one exists, otherwise the percent window with the longest period.
+ */
+export function selectComparisonWindow(windows: QuotaWindow[]): QuotaWindow | null {
+  const percent = windows.filter((window) => window.format === 'percent');
+  const weekly = percent.filter(
+    (window) =>
+      window.id.toLowerCase().includes('week') || window.label.toLowerCase().includes('week'),
+  );
+  const candidates = weekly.length > 0 ? weekly : percent;
+  let longest: QuotaWindow | null = null;
+  for (const window of candidates) {
+    if (!longest || window.periodSeconds > longest.periodSeconds) longest = window;
+  }
+  return longest;
+}
+
+/**
+ * Percentage points between elapsed time and consumption for a window, or null
+ * when the pacing projection reports no elapsed time for it.
+ */
+export function sparePercent(window: QuotaWindow | null, now: number): number | null {
+  if (!window) return null;
+  const pace = projectPace(window, now);
+  if (pace.evenPacePercent === null) return null;
+  const used = Math.min(100, Math.max(0, window.usedPercent));
+  return pace.evenPacePercent - used;
+}
+
 export function isFreshSessionWindow(window: QuotaWindow, now: number, isSessionWindow: boolean) {
   if (!isSessionWindow || window.usedPercent > 0 || !window.resetsAt) return false;
   const reset = new Date(window.resetsAt).getTime();

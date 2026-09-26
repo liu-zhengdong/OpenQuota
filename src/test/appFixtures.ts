@@ -287,6 +287,7 @@ export const settingsState: SettingsViewState = {
     usageDisplay: 'left',
     resetDisplay: 'countdown',
     timeFormat: 'system',
+    providerSort: 'custom',
     alwaysShowPacing: false,
     launchAtLogin: false,
     autoCheckUpdates: true,

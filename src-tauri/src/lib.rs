@@ -1,4 +1,5 @@
 mod child_process;
+mod cli;
 mod commands;
 mod desktop_integration;
 mod hashing;
@@ -324,6 +325,13 @@ pub(crate) fn autostart_is_enabled(app: &AppHandle) -> Result<bool, ()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Headless subcommands exit before any Tauri state exists, so they never
+    // start the GUI, claim the single-instance slot, or touch the network.
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(exit_code) = cli::dispatch(&arguments) {
+        std::process::exit(exit_code);
+    }
+
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

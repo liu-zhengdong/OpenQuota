@@ -82,6 +82,28 @@ available in API-key-only sessions.
 
 OpenQuota runs locally and has no account, cloud backend, analytics, or usage telemetry of its own.
 
+## Command line
+
+The same executable doubles as a read-only query tool. Passing the `pace` subcommand skips the GUI,
+the single-instance hand-off, and any network refresh: it opens the local database read-only, prints
+the latest cached provider snapshots, and exits.
+
+```sh
+/Applications/OpenQuota.app/Contents/MacOS/openquota pace          # aligned text table
+/Applications/OpenQuota.app/Contents/MacOS/openquota pace --json   # stable JSON array
+```
+
+Each provider shows the window used for comparison (weekly when one exists, otherwise the longest
+percent window), used percent, elapsed percent of the period, spare percent (elapsed − used, so a
+positive value means usage is running behind an even pace), hours to reset, the short session
+window's used percent, and the snapshot age. Rows are sorted by spare, highest first.
+
+`--json` prints a JSON array with camelCase fields and ISO 8601 UTC timestamps for scripts. Exit
+codes are `0` for a printed report, `1` when the database could not be read, `2` when it holds no
+snapshots, and `64` for an invalid command line. Snapshots that fail to parse are reported on
+stderr and skipped. `--db <path>` and `OPENQUOTA_PACE_DB` point the command at another database
+file, which is intended for testing.
+
 ## Development
 
 Requirements:

@@ -113,6 +113,24 @@ fn level_projection(_used: f64) -> PaceProjection {
     }
 }
 
+/// Share of the quota period that has already elapsed, as a percentage.
+///
+/// This mirrors `evenPacePercent` from `src/lib/pacing.ts`: the value is `None`
+/// whenever the frontend reports an untracked or spent window, so both surfaces
+/// keep the same boundary handling.
+pub fn period_elapsed_percent(window: &QuotaWindow, now: DateTime<Utc>) -> Option<f64> {
+    project(window, now).even_pace_percent
+}
+
+/// Percentage points between elapsed time and consumption (`elapsed - used`).
+///
+/// A positive value means usage is running behind an even pace. It is `None`
+/// whenever [`period_elapsed_percent`] is `None`.
+pub fn spare_percent(window: &QuotaWindow, now: DateTime<Utc>) -> Option<f64> {
+    period_elapsed_percent(window, now)
+        .map(|elapsed| elapsed - window.used_percent.clamp(0.0, 100.0))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Milestone {
     AlmostOut,
@@ -363,11 +381,11 @@ fn reset_advanced(current: Option<DateTime<Utc>>, previous: Option<DateTime<Utc>
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{DateTime, Duration, TimeZone, Utc};
 
     use super::{
-        project, transition, Milestone, NotificationEvaluator, NotificationState, PaceAlert,
-        PaceSeverity,
+        period_elapsed_percent, project, spare_percent, transition, Milestone,
+        NotificationEvaluator, NotificationState, PaceAlert, PaceSeverity,
     };
     use crate::models::{
         AppSettings, MetricDefinition, MetricLayout, MetricSection, MetricSource,
@@ -410,6 +428,88 @@ mod tests {
             project(&window(60.0, 0.5), now).severity,
             PaceSeverity::RunningOut
         );
+    }
+
+    // Mirrors `quota()` in src/lib/pacing.test.ts: a 10_000 second period that
+    // resets `now + (1 - elapsedFraction) * period`, truncated to milliseconds
+    // exactly like the JavaScript `Date` constructor.
+    fn frontend_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-07-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn frontend_window(used_percent: f64, elapsed_fraction: f64) -> QuotaWindow {
+        let resets_at = frontend_now()
+            + Duration::milliseconds(((1.0 - elapsed_fraction) * 10_000_000.0) as i64);
+        frontend_window_at(used_percent, Some(resets_at))
+    }
+
+    fn frontend_window_at(used_percent: f64, resets_at: Option<DateTime<Utc>>) -> QuotaWindow {
+        QuotaWindow {
+            id: "weekly".into(),
+            label: "Weekly".into(),
+            used_percent,
+            resets_at,
+            period_seconds: 10_000,
+            format: crate::models::QuotaFormat::Percent,
+            used_value: None,
+            limit_value: None,
+            unit: None,
+            estimated: false,
+            source_note: None,
+        }
+    }
+
+    #[test]
+    fn period_elapsed_matches_the_frontend_pacing_contract() {
+        let now = frontend_now();
+        for (used, fraction, expected) in [
+            (30.0, 0.5, Some(50.0)),
+            (46.0, 0.5, Some(50.0)),
+            (60.0, 0.5, Some(50.0)),
+            (50.0, 0.5, Some(50.0)),
+            (49.8, 0.5, Some(50.0)),
+            (1.0, 0.009, None),
+            (4.0, 0.02, None),
+            (0.0, 0.5, None),
+            (-0.1, 0.5, None),
+        ] {
+            let window = frontend_window(used, fraction);
+            assert_eq!(
+                period_elapsed_percent(&window, now),
+                expected,
+                "used={used} fraction={fraction}"
+            );
+        }
+
+        // The frontend test expects ~66.666 projected usage at 1.5% elapsed.
+        let ready = frontend_window(1.0, 0.015);
+        let elapsed = period_elapsed_percent(&ready, now).unwrap();
+        assert!((elapsed - 1.5).abs() < 0.001);
+
+        // Spent windows stop reporting elapsed time, in both formats.
+        let dollars = QuotaWindow {
+            format: crate::models::QuotaFormat::Dollars,
+            used_value: Some(9.996),
+            limit_value: Some(10.0),
+            ..frontend_window_at(99.0, None)
+        };
+        for window in [
+            frontend_window_at(99.5, None),
+            frontend_window_at(99.51, None),
+            dollars,
+        ] {
+            assert_eq!(period_elapsed_percent(&window, now), None);
+        }
+    }
+
+    #[test]
+    fn spare_percent_is_elapsed_time_minus_consumption() {
+        let now = frontend_now();
+        assert_eq!(spare_percent(&frontend_window(30.0, 0.5), now), Some(20.0));
+        assert_eq!(spare_percent(&frontend_window(60.0, 0.5), now), Some(-10.0));
+        assert_eq!(spare_percent(&frontend_window(0.0, 0.5), now), None);
     }
 
     #[test]
