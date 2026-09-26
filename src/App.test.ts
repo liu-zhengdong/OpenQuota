@@ -108,14 +108,71 @@ describe('OpenQuota dashboard', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.reject(new Error(`unexpected command ${command}`));
     });
   });
   afterEach(cleanup);
 
-  it('renders quota, total spend, and the 30-day trend from backend data', async () => {
+  it('renders and customizes a newly reported scoped model alongside Fable', async () => {
+    const view = structuredClone(claudeState);
+    const snapshot = view.snapshot!;
+    snapshot.quotas.push(
+      { ...snapshot.quotas[0], id: 'fable', label: 'Fable', usedPercent: 12 },
+      { ...snapshot.quotas[0], id: 'scoped-opus-5-5', label: 'Opus 5.5', usedPercent: 34 },
+    );
+    const saved = structuredClone(settingsState);
+    saved.settings.providers = [
+      {
+        id: 'claude',
+        enabled: true,
+        detected: true,
+        expanded: true,
+        metrics: [
+          { id: 'claude.session', enabled: true, section: 'alwaysVisible', pinned: false },
+          { id: 'claude.fable', enabled: true, section: 'onDemand', pinned: false },
+        ],
+      },
+    ];
+    mockInvoke((command, args) => {
+      if (command === 'get_usage_state' || command === 'refresh_usage')
+        return Promise.resolve({ providers: { claude: view } });
+      if (command === 'get_app_settings') return Promise.resolve(saved);
+      if (command === 'save_app_settings')
+        return Promise.resolve({ ...saved, settings: args?.settings });
+      return Promise.resolve(null);
+    });
+    render(App);
+    expect(await screen.findByRole('progressbar', { name: 'Opus 5.5 used' })).toHaveAttribute(
+      'aria-valuenow',
+      '34',
+    );
+    expect(screen.getByRole('progressbar', { name: 'Fable used' })).toHaveAttribute(
+      'aria-valuenow',
+      '12',
+    );
+    await fireEvent.contextMenu(screen.getByRole('group', { name: 'Opus 5.5 options' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Hide' }));
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        'save_app_settings',
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            providers: expect.arrayContaining([
+              expect.objectContaining({
+                metrics: expect.arrayContaining([
+                  expect.objectContaining({ id: 'claude.scoped-opus-5-5', enabled: false }),
+                ]),
+              }),
+            ]),
+          }),
+        }),
+      ),
+    );
+  });
+
+  it('renders cloud quotas without local spend or token history', async () => {
     const { container } = render(App);
     expect(await screen.findByText('Plus')).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Session used' })).toHaveAttribute(
@@ -123,12 +180,8 @@ describe('OpenQuota dashboard', () => {
       '32',
     );
     expect(screen.getByRole('progressbar', { name: 'Weekly used' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Total Spend' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Usage Trend' })).toBeInTheDocument();
-    expect(container.querySelector('.spend-ring__label')).toHaveAttribute(
-      'data-tooltip',
-      '$3.84 · Estimated locally, so it may be off',
-    );
+    expect(screen.queryByRole('region', { name: 'Total Spend' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Usage Trend' })).not.toBeInTheDocument();
     expect(screen.getByText(`OpenQuota ${import.meta.env.APP_VERSION}`)).toBeInTheDocument();
     expect(container.querySelector('.floating-chrome')).not.toBeInTheDocument();
   });
@@ -319,7 +372,7 @@ describe('OpenQuota dashboard', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.resolve(multiProviderSettings);
     });
@@ -329,11 +382,6 @@ describe('OpenQuota dashboard', () => {
     expect(screen.getByRole('heading', { name: 'Antigravity' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '$37.50 left' })).toBeInTheDocument();
     expect(screen.getAllByRole('progressbar')).toHaveLength(6);
-    expect(
-      within(screen.getByRole('region', { name: 'Total Spend' })).getByRole('img', {
-        name: 'Only includes Claude and Codex',
-      }),
-    ).toBeInTheDocument();
   });
 
   it('renames an observed Claude card from its context menu', async () => {
@@ -378,7 +426,7 @@ describe('OpenQuota dashboard', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.resolve();
     });
@@ -489,70 +537,12 @@ describe('OpenQuota dashboard', () => {
     });
   });
 
-  it('persists Total Spend metric and period choices', async () => {
-    render(App);
-    await screen.findByText('Plus');
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Total Spend Metric' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Tokens' }));
-    await fireEvent.click(screen.getByRole('button', { name: '30 Days' }));
-    await waitFor(() =>
-      expect(mocks.invoke).toHaveBeenCalledWith(
-        'save_app_settings',
-        expect.objectContaining({
-          settings: expect.objectContaining({ totalSpendPeriod: 'last30Days' }),
-        }),
-      ),
-    );
-  });
-
-  it('explains unavailable cost and reveals measured tokens for the same period', async () => {
-    mockInvoke((command: string, args?: { settings?: SettingsViewState['settings'] }) => {
-      if (command === 'get_usage_state')
-        return Promise.resolve({
-          providers: {
-            codex: {
-              ...codexState,
-              snapshot: {
-                ...codexState.snapshot!,
-                usage: {
-                  ...codexState.snapshot!.usage,
-                  today: {
-                    tokens: 2_100_000,
-                    estimatedCostUsd: null,
-                    costEstimated: true,
-                    estimateComplete: false,
-                  },
-                },
-              },
-            },
-          },
-        });
-      if (command === 'get_app_settings') return Promise.resolve(settingsState);
-      if (command === 'save_app_settings')
-        return Promise.resolve({
-          ...settingsState,
-          settings: args?.settings ?? settingsState.settings,
-        });
-      return Promise.resolve(liveState);
-    });
-    render(App);
-    const totalSpend = await screen.findByRole('region', { name: 'Total Spend' });
-    expect(within(totalSpend).getByText('No cost data for this period')).toBeInTheDocument();
-    await fireEvent.click(within(totalSpend).getByRole('combobox', { name: 'Total Spend Metric' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Tokens' }));
-    expect(within(totalSpend).getByText('Codex')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('2.1')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('million')).toBeInTheDocument();
-    expect(within(totalSpend).getByText('2.1M')).toBeInTheDocument();
-    expect(within(totalSpend).queryByText('No data')).not.toBeInTheDocument();
-  });
-
   it('reveals On Demand metrics without losing their saved order', async () => {
     render(App);
     await screen.findByText('Plus');
-    expect(screen.queryByText('$3.84 · 2.1M tokens')).not.toBeInTheDocument();
+    expect(screen.queryByText('Rate Limit Resets')).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
-    expect(screen.getByText('$3.84 · 2.1M tokens')).toBeInTheDocument();
+    expect(screen.getByText('Rate Limit Resets')).toBeInTheDocument();
     await waitFor(() =>
       expect(mocks.invoke).toHaveBeenCalledWith('save_app_settings', expect.any(Object)),
     );
@@ -664,17 +654,6 @@ describe('OpenQuota dashboard', () => {
     expect(screen.getByRole('button', { name: 'Dashboard, opens in browser' })).toBeInTheDocument();
   });
 
-  it('renders the Total Spend ring as separated rounded SVG sectors', async () => {
-    render(App);
-    expect(await screen.findByRole('region', { name: 'Total Spend' })).toBeInTheDocument();
-    await waitFor(() => expect(document.querySelector('.spend-ring svg')).not.toBeNull());
-    const segment = document.querySelector('.spend-ring__segment');
-    expect(segment?.tagName).toBe('path');
-    expect(segment?.getAttribute('d')).toMatch(/^M .* A .* Q .* Z$/);
-    expect(document.querySelector('.spend-ring__track')).toBeNull();
-    expect(document.querySelector('.period-switcher__selection')).not.toBeNull();
-  });
-
   it('opens Customize and exposes the two-section metric layout', async () => {
     render(App);
     await screen.findByText('Plus');
@@ -707,7 +686,7 @@ describe('OpenQuota dashboard', () => {
     await fireEvent.click(screen.getByLabelText('Open options'));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Customize codex' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Pin Today' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Pin Spark' }));
     expect(screen.getByText('Up to 2 stars per provider')).toBeInTheDocument();
   });
 
@@ -823,7 +802,7 @@ describe('OpenQuota dashboard', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.resolve();
     });
@@ -866,7 +845,7 @@ describe('OpenQuota dashboard', () => {
     expect(screen.getByRole('checkbox', { name: /Almost Out/ })).toBeChecked();
   });
 
-  it('confirms a full settings reset without deleting credentials or usage data', async () => {
+  it('confirms a full settings reset without deleting credentials', async () => {
     render(App);
     await screen.findByText('Plus');
     await fireEvent.click(screen.getByLabelText('Open options'));
@@ -876,9 +855,7 @@ describe('OpenQuota dashboard', () => {
     await fireEvent.click(trigger);
 
     const dialog = screen.getByRole('alertdialog', { name: 'Reset All Settings?' });
-    expect(dialog).toHaveTextContent(
-      'Provider sign-ins, API keys, and usage history stay in place.',
-    );
+    expect(dialog).toHaveTextContent('Provider sign-ins and API keys stay in place.');
     expect(mocks.invoke).not.toHaveBeenCalledWith('reset_all_settings', expect.anything());
     const cancel = screen.getByRole('button', { name: 'Cancel' });
     await waitFor(() => expect(cancel).toHaveFocus());
@@ -914,7 +891,7 @@ describe('OpenQuota dashboard', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.resolve();
     });
@@ -1056,7 +1033,6 @@ describe('OpenQuota dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           ...settingsState.settings.providers,
           {
@@ -1145,7 +1121,6 @@ describe('OpenQuota dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           {
             id: 'claude',
@@ -1213,7 +1188,6 @@ describe('OpenQuota dashboard', () => {
       ...settingsState,
       settings: {
         ...settingsState.settings,
-        showTotalSpend: false,
         providers: [
           {
             id: 'claude',

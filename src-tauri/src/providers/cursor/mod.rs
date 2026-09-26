@@ -1,30 +1,23 @@
 pub mod auth;
 pub mod client;
-pub mod csv;
+
 pub mod mapper;
 
-use std::sync::Arc;
-
-use chrono::{Days, Local, TimeZone, Utc};
+use chrono::Utc;
 use reqwest::StatusCode;
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::{
-    models::{
-        MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderSnapshot,
-        UsageHistory, UsagePeriodSelection,
-    },
-    pricing::PricingStore,
+use crate::models::{
+    MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderSnapshot,
 };
 
 use self::{
     auth::CursorAuthState,
     client::{CursorClient, CursorResponse},
-    csv::parse_usage_csv,
     mapper::{
         map_live_usage, map_request_usage, map_summary_usage, request_fallback,
-        stripe_balance_cents, usage_history, PlanUsageFacts,
+        stripe_balance_cents, PlanUsageFacts,
     },
 };
 
@@ -34,7 +27,7 @@ pub(crate) fn definition() -> ProviderDefinition {
         display_name: "Cursor".into(),
         short_name: "Cu".into(),
         fallback_enabled: true,
-        local_usage_source_note: Some("From your Cursor usage export".into()),
+        scoped_quota_prefix: None,
         links: vec![
             ProviderLink::new("Status", "https://status.cursor.com/"),
             ProviderLink::new("Dashboard", "https://www.cursor.com/dashboard"),
@@ -99,28 +92,6 @@ pub(crate) fn definition() -> ProviderDefinition {
                 "C",
                 None,
             ),
-            MetricDefinition::trend("cursor.trend"),
-            MetricDefinition::usage(
-                "cursor.today",
-                "Today",
-                UsagePeriodSelection::Today,
-                MetricSection::OnDemand,
-                "T",
-            ),
-            MetricDefinition::usage(
-                "cursor.yesterday",
-                "Yesterday",
-                UsagePeriodSelection::Yesterday,
-                MetricSection::OnDemand,
-                "Y",
-            ),
-            MetricDefinition::usage(
-                "cursor.last30",
-                "Last 30 Days",
-                UsagePeriodSelection::Last30Days,
-                MetricSection::OnDemand,
-                "M",
-            ),
         ],
     }
 }
@@ -152,14 +123,12 @@ pub enum CursorError {
 }
 
 pub struct CursorProvider {
-    pricing: Arc<PricingStore>,
     client: CursorClient,
 }
 
 impl CursorProvider {
-    pub fn new(pricing: Arc<PricingStore>) -> Result<Self, CursorError> {
+    pub fn new() -> Result<Self, CursorError> {
         Ok(Self {
-            pricing,
             client: CursorClient::new()?,
         })
     }
@@ -203,8 +172,7 @@ impl CursorProvider {
                 plan_name.as_deref(),
                 message,
             )?;
-            let history = self.fetch_usage_history(current_token, now);
-            return Ok(snapshot(mapped, history, Vec::new(), now));
+            return Ok(snapshot(mapped, Vec::new(), now));
         }
         if PlanUsageFacts::new(&usage).should_try_generic_request_fallback() {
             if let Ok(mapped) = self.request_based_result(
@@ -212,7 +180,7 @@ impl CursorProvider {
                 plan_name.as_deref(),
                 "Cursor request-based usage data unavailable. Try again later.",
             ) {
-                return Ok(snapshot(mapped, UsageHistory::default(), Vec::new(), now));
+                return Ok(snapshot(mapped, Vec::new(), now));
             }
         }
 
@@ -235,8 +203,7 @@ impl CursorProvider {
             credits.as_ref(),
             stripe_balance_cents(stripe.as_ref()),
         )?;
-        let history = self.fetch_usage_history(current_token, now);
-        Ok(snapshot(mapped, history, Vec::new(), now))
+        Ok(snapshot(mapped, Vec::new(), now))
     }
 
     fn fetch_usage_with_retry(
@@ -402,41 +369,10 @@ impl CursorProvider {
         }
         body
     }
-
-    fn fetch_usage_history(&self, access_token: &str, now: chrono::DateTime<Utc>) -> UsageHistory {
-        let local_now = now.with_timezone(&Local);
-        let start_date = local_now.date_naive().checked_sub_days(Days::new(29));
-        let Some(start) = start_date
-            .and_then(|date| date.and_hms_opt(0, 0, 0))
-            .and_then(|date| Local.from_local_datetime(&date).earliest())
-        else {
-            return UsageHistory::default();
-        };
-        let Some(response) = self
-            .client
-            .fetch_usage_csv(
-                access_token,
-                start.timestamp_millis(),
-                now.timestamp_millis(),
-            )
-            .ok()
-            .flatten()
-            .filter(|response| response.status.is_success())
-        else {
-            return UsageHistory::default();
-        };
-        let Ok(csv) = std::str::from_utf8(&response.body) else {
-            return UsageHistory::default();
-        };
-        let pricing = self.pricing.current();
-        let rows = parse_usage_csv(csv, &pricing);
-        usage_history(&rows, now, &pricing)
-    }
 }
 
 fn snapshot(
     mapped: mapper::CursorMappedUsage,
-    usage: UsageHistory,
     warnings: Vec<String>,
     refreshed_at: chrono::DateTime<Utc>,
 ) -> ProviderSnapshot {
@@ -447,7 +383,7 @@ fn snapshot(
         value_metrics: mapped.value_metrics,
         status_metrics: Vec::new(),
         notices: Vec::new(),
-        usage,
+
         warnings,
         refreshed_at,
     }
@@ -523,14 +459,12 @@ mod tests {
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use chrono::{TimeZone, Utc};
     use rusqlite::Connection;
-    use tempfile::tempdir;
 
     use super::{
         auth::{CursorAuthSource, CursorAuthState},
         client::{CursorClient, Endpoints},
         definition, CursorProvider,
     };
-    use crate::pricing::PricingStore;
 
     fn jwt(subject: &str) -> String {
         let payload = URL_SAFE_NO_PAD
@@ -545,7 +479,7 @@ mod tests {
         let recorded = requests.clone();
         thread::spawn(move || {
             let mut usage_calls = 0;
-            for _ in 0..7 {
+            for _ in 0..6 {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return;
                 };
@@ -595,11 +529,7 @@ mod tests {
                         r#"{"customerBalance":-1000}"#.to_owned(),
                     )
                 } else {
-                    (
-                        200,
-                        "text/csv",
-                        "Date,Model,Input (w/o Cache Write),Output Tokens\n2026-07-15T12:00:00Z,composer-1,100,0".to_owned(),
-                    )
+                    (200, "application/json", "{}".to_owned())
                 };
                 let response = format!(
                     "HTTP/1.1 {status} Test\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -617,7 +547,7 @@ mod tests {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
         thread::spawn(move || {
-            for _ in 0..5 {
+            for _ in 0..4 {
                 let Ok((mut stream, _)) = listener.accept() else {
                     return;
                 };
@@ -652,10 +582,7 @@ mod tests {
                         r#"{"gpt-4":{"numRequests":37,"numRequestsTotal":37,"maxRequestUsage":750},"startOfMonth":"2026-07-01T00:00:00Z"}"#.to_owned(),
                     )
                 } else {
-                    (
-                        "text/csv",
-                        "Date,Model,Input (w/o Cache Write),Output Tokens\n2026-07-15T12:00:00Z,composer-1,100,0".to_owned(),
-                    )
+                    ("application/json", "{}".to_owned())
                 };
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -684,10 +611,6 @@ mod tests {
                 "cursor.onDemand",
                 "cursor.requests",
                 "cursor.credits",
-                "cursor.trend",
-                "cursor.today",
-                "cursor.yesterday",
-                "cursor.last30",
             ]
         );
         assert!(definition.metrics[1].default_pinned);
@@ -697,8 +620,8 @@ mod tests {
     }
 
     #[test]
-    fn provider_retries_auth_and_keeps_optional_csv_spend_additive() {
-        let directory = tempdir().unwrap();
+    fn provider_retries_auth_and_keeps_cloud_credits() {
+        let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("state.vscdb");
         let connection = Connection::open(&database).unwrap();
         connection
@@ -718,11 +641,8 @@ mod tests {
             rest_usage: format!("{base}/rest"),
             usage_summary: format!("{base}/summary"),
             stripe: format!("{base}/stripe"),
-            csv: format!("{base}/csv"),
         };
-        let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
         let provider = CursorProvider {
-            pricing,
             client: CursorClient::with_endpoints(endpoints).unwrap(),
         };
         let auth = CursorAuthState {
@@ -737,7 +657,6 @@ mod tests {
         assert_eq!(snapshot.plan.as_deref(), Some("Pro Plan"));
         assert_eq!(snapshot.quotas.len(), 3);
         assert_eq!(snapshot.value_metrics[0].id, "credits");
-        assert_eq!(snapshot.usage.today.as_ref().unwrap().tokens, 100);
         assert!(snapshot.warnings.is_empty());
         let saved: String = Connection::open(database)
             .unwrap()
@@ -756,12 +675,12 @@ mod tests {
                 .count(),
             2
         );
-        assert!(requests.iter().any(|path| path.starts_with("/csv?")));
+        assert!(!requests.iter().any(|path| path.starts_with("/csv")));
     }
 
     #[test]
     fn provider_keeps_a_refreshed_token_in_memory_without_a_visible_save_warning() {
-        let directory = tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
         let refreshed = jwt("google-oauth2|user_abc123");
         let (base, _) = routing_server(refreshed);
         let endpoints = Endpoints {
@@ -772,11 +691,8 @@ mod tests {
             rest_usage: format!("{base}/rest"),
             usage_summary: format!("{base}/summary"),
             stripe: format!("{base}/stripe"),
-            csv: format!("{base}/csv"),
         };
-        let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
         let provider = CursorProvider {
-            pricing,
             client: CursorClient::with_endpoints(endpoints).unwrap(),
         };
         let auth = CursorAuthState {
@@ -794,8 +710,8 @@ mod tests {
     }
 
     #[test]
-    fn enterprise_fallback_combines_summary_requests_and_csv_history() {
-        let directory = tempdir().unwrap();
+    fn enterprise_fallback_combines_summary_and_requests() {
+        let directory = tempfile::tempdir().unwrap();
         let (base, requests) = enterprise_server();
         let endpoints = Endpoints {
             usage: format!("{base}/usage"),
@@ -805,11 +721,8 @@ mod tests {
             rest_usage: format!("{base}/rest"),
             usage_summary: format!("{base}/summary"),
             stripe: format!("{base}/stripe"),
-            csv: format!("{base}/csv"),
         };
-        let pricing = Arc::new(PricingStore::new(directory.path().join("pricing")).unwrap());
         let provider = CursorProvider {
-            pricing,
             client: CursorClient::with_endpoints(endpoints).unwrap(),
         };
         let auth = CursorAuthState {
@@ -832,12 +745,11 @@ mod tests {
         );
         assert_eq!(snapshot.quotas[0].used_value, Some(37.0));
         assert_eq!(snapshot.quotas[0].limit_value, Some(750.0));
-        assert_eq!(snapshot.usage.today.as_ref().unwrap().tokens, 100);
         let requests = requests.lock().unwrap();
         assert!(requests.iter().any(|path| path == "/summary"));
         assert!(requests
             .iter()
             .any(|path| path.starts_with("/rest?user=enterprise-user")));
-        assert!(requests.iter().any(|path| path.starts_with("/csv?")));
+        assert!(!requests.iter().any(|path| path.starts_with("/csv")));
     }
 }

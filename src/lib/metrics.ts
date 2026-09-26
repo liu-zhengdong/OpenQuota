@@ -1,9 +1,4 @@
-import type {
-  MetricDefinition,
-  ProviderCatalog,
-  ProviderDefinition,
-  ProviderSnapshot,
-} from './types';
+import type { MetricDefinition, ProviderCatalog, ProviderDefinition } from './types';
 
 export class ProviderCatalogIndex {
   readonly providers: ProviderDefinition[];
@@ -45,29 +40,69 @@ export class ProviderCatalogIndex {
     return this.provider(id)?.displayName ?? id;
   }
 
-  supportsSpend(id: string) {
-    return this.provider(id)?.metrics.some((metric) => metric.source.kind === 'usage') ?? false;
-  }
-
   supportsApiKeyConfiguration(id: string) {
     return this.#apiKeyProviderIds.has(id);
   }
-
-  localUsageSourceNote(id: string) {
-    const provider = this.provider(id);
-    return (
-      provider?.localUsageSourceNote ?? `From your ${provider?.displayName ?? id} usage history`
-    );
-  }
-}
-
-export function usageSourceNote(catalog: ProviderCatalogIndex, snapshot: ProviderSnapshot) {
-  return (
-    snapshot.usage.last30Days?.modelBreakdown?.sourceNote ??
-    snapshot.usage.today?.modelBreakdown?.sourceNote ??
-    snapshot.usage.yesterday?.modelBreakdown?.sourceNote ??
-    catalog.localUsageSourceNote(snapshot.providerId)
-  );
 }
 
 export const emptyProviderCatalog = new ProviderCatalogIndex({ providers: [] });
+
+// Cloud model windows can appear after bootstrap. Keep persisted layouts, including Fable's ID.
+export function withSnapshotMetrics(
+  catalog: ProviderCatalogIndex,
+  view: import('./types').UsageViewState,
+): ProviderCatalogIndex {
+  return new ProviderCatalogIndex({
+    apiKeyProviderIds: catalog.providers
+      .filter((p) => catalog.supportsApiKeyConfiguration(p.id))
+      .map((p) => p.id),
+    providers: catalog.providers.map((provider) => {
+      if (!provider.scopedQuotaPrefix) return provider;
+      const metrics = [...provider.metrics];
+      for (const quota of view.providers[provider.id]?.snapshot?.quotas ?? []) {
+        if (
+          !quota.id.startsWith(provider.scopedQuotaPrefix) ||
+          metrics.some((m) => m.id === `${provider.id}.${quota.id}`)
+        )
+          continue;
+        metrics.push({
+          id: `${provider.id}.${quota.id}`,
+          label: quota.label,
+          source: { kind: 'quota', sourceId: quota.id, sessionWindow: false },
+          pinnable: true,
+          defaultEnabled: true,
+          defaultSection: 'alwaysVisible',
+          defaultPinned: false,
+          tray: { shortLabel: quota.label, suffix: null },
+        });
+      }
+      return { ...provider, metrics };
+    }),
+  });
+}
+
+export function withCatalogLayouts(
+  state: import('./types').SettingsViewState | null,
+  catalog: ProviderCatalogIndex,
+): import('./types').SettingsViewState | null {
+  if (!state) return null;
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      providers: state.settings.providers.map((provider) => {
+        const metrics = [...provider.metrics];
+        for (const definition of catalog.provider(provider.id)?.metrics ?? []) {
+          if (metrics.some((m) => m.id === definition.id)) continue;
+          metrics.push({
+            id: definition.id,
+            enabled: definition.defaultEnabled,
+            section: definition.defaultSection,
+            pinned: definition.defaultPinned,
+          });
+        }
+        return { ...provider, metrics };
+      }),
+    },
+  };
+}

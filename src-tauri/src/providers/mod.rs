@@ -5,16 +5,14 @@ pub mod codex;
 pub mod copilot;
 pub mod credential_store;
 pub mod cursor;
-mod daily_usage;
 mod detection;
 pub mod devin;
 pub mod grok;
 pub mod kimi;
-mod log_usage;
+
 pub mod minimax;
 pub mod opencode;
 pub mod openrouter;
-mod pi_usage;
 mod registry;
 #[cfg(test)]
 pub mod test_http;

@@ -5,7 +5,7 @@ use crate::tray_icon;
 use crate::{
     models::{
         AppSettings, MetricDefinition, MetricSource, MetricValue, MetricValueKind,
-        ProviderSnapshot, QuotaFormat, UsageDisplay, UsagePeriod, UsagePeriodSelection,
+        ProviderSnapshot, QuotaFormat, UsageDisplay,
     },
     providers::ProviderRegistry,
     service::UsageViewState,
@@ -225,7 +225,7 @@ fn resolved_groups(
                 .filter_map(|metric| {
                     let metric_definition = registry.metric(&metric.id)?;
                     let mut resolved =
-                        tray_metric(metric_definition, snapshot, settings.usage_display)?;
+                        tray_metric(&metric_definition, snapshot, settings.usage_display)?;
                     resolved.detail = format!(
                         "{} {}",
                         settings.provider_display_name(definition),
@@ -311,18 +311,6 @@ fn tray_metric(
             value_metric(snapshot, source_id, tray.suffix.as_deref())
         }
         MetricSource::Status { source_id } => status_metric(snapshot, source_id),
-        MetricSource::Usage { period } => {
-            usage_metric(&definition.label, usage_period(snapshot, *period))
-        }
-        MetricSource::Trend => None,
-    }
-}
-
-fn usage_period(snapshot: &ProviderSnapshot, period: UsagePeriodSelection) -> Option<&UsagePeriod> {
-    match period {
-        UsagePeriodSelection::Today => snapshot.usage.today.as_ref(),
-        UsagePeriodSelection::Yesterday => snapshot.usage.yesterday.as_ref(),
-        UsagePeriodSelection::Last30Days => snapshot.usage.last_30_days.as_ref(),
     }
 }
 
@@ -372,7 +360,7 @@ fn value_metric(
 fn format_tray_value(value: &MetricValue) -> String {
     let number = match value.kind {
         MetricValueKind::Dollars => format!("${:.0}", value.number),
-        MetricValueKind::Count => format_tokens(value.number.max(0.0) as u64),
+        MetricValueKind::Count => format_count(value.number.max(0.0) as u64),
     };
     value
         .label
@@ -393,27 +381,13 @@ fn format_detail_value(value: &MetricValue) -> String {
         .unwrap_or(number)
 }
 
-fn usage_metric(label: &str, period: Option<&UsagePeriod>) -> Option<TrayMetric> {
-    let period = period?;
-    let value = period
-        .estimated_cost_usd
-        .map(|value| format!("${value:.2}"))
-        .unwrap_or_else(|| format_tokens(period.tokens));
-    let detail = format!("{label} {value}");
-    Some(TrayMetric {
-        value,
-        detail,
-        gauge: None,
-    })
-}
-
-fn format_tokens(tokens: u64) -> String {
-    if tokens >= 1_000_000 {
-        format!("{:.1}M", tokens as f64 / 1_000_000.0)
-    } else if tokens >= 1_000 {
-        format!("{:.1}K", tokens as f64 / 1_000.0)
+fn format_count(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", count as f64 / 1_000.0)
     } else {
-        tokens.to_string()
+        count.to_string()
     }
 }
 
@@ -431,15 +405,14 @@ mod tests {
     use crate::{
         models::{
             MetricDefinition, MetricSection, MetricValue, MetricValueKind, ProviderSnapshot,
-            ProviderViewState, QuotaWindow, SnapshotSource, StatusMetric, StatusTone, UsageHistory,
-            ValueMetric,
+            ProviderViewState, QuotaWindow, SnapshotSource, StatusMetric, StatusTone, ValueMetric,
         },
         providers::{codex, cursor, ProviderRegistry},
         settings::default_settings,
     };
 
     use super::{
-        bar_fractions, format_tokens, mac_menu_bar_presentation, primary_gauge, resolved_groups,
+        bar_fractions, format_count, mac_menu_bar_presentation, primary_gauge, resolved_groups,
         text_groups, MacMenuBarIcon, MacMenuBarPresentation, TrayGauge, TrayGroup, TrayMetric,
     };
     use crate::service::UsageViewState;
@@ -612,7 +585,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
@@ -692,7 +664,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
@@ -700,9 +671,9 @@ mod tests {
         let definition = catalog.metric("cursor.requests").unwrap();
 
         let left =
-            super::tray_metric(definition, &snapshot, crate::models::UsageDisplay::Left).unwrap();
+            super::tray_metric(&definition, &snapshot, crate::models::UsageDisplay::Left).unwrap();
         let used =
-            super::tray_metric(definition, &snapshot, crate::models::UsageDisplay::Used).unwrap();
+            super::tray_metric(&definition, &snapshot, crate::models::UsageDisplay::Used).unwrap();
 
         assert_eq!(left.value, "75");
         assert_eq!(left.detail, "Requests 75 searches left");
@@ -732,10 +703,10 @@ mod tests {
     }
 
     #[test]
-    fn token_fallback_stays_compact() {
-        assert_eq!(format_tokens(999), "999");
-        assert_eq!(format_tokens(12_340), "12.3K");
-        assert_eq!(format_tokens(2_500_000), "2.5M");
+    fn count_values_stay_compact() {
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(12_340), "12.3K");
+        assert_eq!(format_count(2_500_000), "2.5M");
     }
 
     #[test]
@@ -802,13 +773,12 @@ mod tests {
             }],
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
         let catalog = ProviderRegistry::from_definitions(vec![codex::definition()]).unwrap();
         let metric = super::tray_metric(
-            catalog.metric("codex.credits").unwrap(),
+            &catalog.metric("codex.credits").unwrap(),
             &snapshot,
             crate::models::UsageDisplay::Left,
         )
@@ -833,7 +803,6 @@ mod tests {
                 subtitle: None,
             }],
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };

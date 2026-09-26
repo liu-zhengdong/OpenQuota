@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::child_process::background_command;
 
-const RELEASE_URL: &str = "https://github.com/deviffyy/OpenQuota/releases/latest";
+const RELEASE_URL: &str = "https://github.com/liu-zhengdong/OpenQuota/releases/latest";
 
 #[derive(Default)]
 pub struct UpdateCoordinator {

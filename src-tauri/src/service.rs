@@ -587,14 +587,15 @@ fn validate_snapshot(
             _ => None,
         })
         .collect::<std::collections::HashSet<_>>();
-    if snapshot
-        .quotas
+    if snapshot.quotas.iter().any(|quota| {
+        !quota_sources.contains(quota.id.as_str())
+            && registry
+                .scoped_metric(provider_id, &quota.id, &quota.label)
+                .is_none()
+    }) || snapshot
+        .value_metrics
         .iter()
-        .any(|quota| !quota_sources.contains(quota.id.as_str()))
-        || snapshot
-            .value_metrics
-            .iter()
-            .any(|metric| !value_sources.contains(metric.id.as_str()))
+        .any(|metric| !value_sources.contains(metric.id.as_str()))
         || snapshot
             .status_metrics
             .iter()
@@ -693,7 +694,7 @@ mod tests {
         models::{
             MetricDefinition, MetricSection, MetricSource, ProviderDefinition, ProviderErrorKind,
             ProviderSnapshot, ProviderViewState, QuotaFormat, QuotaWindow, SnapshotSource,
-            StatusMetric, StatusTone, UsageHistory,
+            StatusMetric, StatusTone,
         },
         policy::{FAILURE_RETRY_BACKOFF, STALE_AFTER},
         providers::{
@@ -869,7 +870,7 @@ mod tests {
             display_name: id.into(),
             short_name: "T".into(),
             fallback_enabled: true,
-            local_usage_source_note: None,
+            scoped_quota_prefix: None,
             links: vec![],
             metrics: vec![MetricDefinition::new(
                 format!("{id}.session"),
@@ -896,7 +897,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         }
@@ -939,7 +939,6 @@ mod tests {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         };
@@ -1074,7 +1073,7 @@ mod tests {
             display_name: "Dynamic".into(),
             short_name: "D".into(),
             fallback_enabled: true,
-            local_usage_source_note: None,
+            scoped_quota_prefix: None,
             links: Vec::new(),
             metrics: vec![
                 MetricDefinition::quota(
@@ -1616,5 +1615,29 @@ mod tests {
             .lock()
             .unwrap()
             .contains_key("recovering"));
+    }
+    #[test]
+    fn snapshot_contract_accepts_declared_scoped_models_and_rejects_other_sources() {
+        let registry =
+            ProviderRegistry::from_definitions(vec![crate::providers::claude::definition()])
+                .unwrap();
+        let mut snapshot = test_snapshot("claude");
+        snapshot.quotas.push(crate::models::QuotaWindow {
+            id: "scoped-opus-5-5".into(),
+            label: "Opus 5.5".into(),
+            used_percent: 34.0,
+            resets_at: None,
+            period_seconds: 604800,
+            format: crate::models::QuotaFormat::Percent,
+            used_value: None,
+            limit_value: None,
+            unit: None,
+            estimated: false,
+            source_note: None,
+        });
+        assert!(validate_snapshot(&registry, "claude", snapshot.clone()).is_ok());
+        assert!(registry.metric("claude.scoped-opus-5-5").unwrap().pinnable);
+        snapshot.quotas[0].id = "undeclared".into();
+        assert!(validate_snapshot(&registry, "claude", snapshot).is_err());
     }
 }

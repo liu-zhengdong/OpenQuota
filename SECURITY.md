@@ -4,14 +4,14 @@
 
 Security fixes are provided for the latest published version of OpenQuota. Before reporting a
 problem, check whether it is still present in the
-[latest release](https://github.com/deviffyy/OpenQuota/releases/latest).
+[latest release](https://github.com/liu-zhengdong/OpenQuota/releases/latest).
 
 ## Reporting a vulnerability
 
 Please do not open a public issue for security vulnerabilities.
 
 Use GitHub's
-[private vulnerability reporting](https://github.com/deviffyy/OpenQuota/security/advisories/new)
+[private vulnerability reporting](https://github.com/liu-zhengdong/OpenQuota/security/advisories/new)
 to report the issue confidentially.
 
 Include:

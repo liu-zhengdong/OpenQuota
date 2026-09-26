@@ -134,12 +134,12 @@ describe('quota pacing presentation', () => {
     show({
       ...quota(24),
       estimated: true,
-      sourceNote: 'Estimated from local records.',
+      sourceNote: 'Estimated from provider records.',
     });
 
     expect(screen.getByLabelText('Estimated quota')).toHaveAttribute(
       'data-tooltip',
-      'Estimated from local records.',
+      'Estimated from provider records.',
     );
   });
 });

@@ -10,7 +10,6 @@ mod notifications;
 mod pacing;
 mod policy;
 mod popup;
-mod pricing;
 mod provider_environment;
 mod providers;
 mod refresh_loop;
@@ -45,7 +44,6 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use crate::{
     desktop_integration::DesktopIntegration,
     pacing::NotificationEvaluator,
-    pricing::PricingStore,
     providers::{
         antigravity::AntigravityProvider, claude, codex::reset_claim::CodexResetClaimService,
         codex::CodexProvider, copilot::CopilotProvider, cursor::CursorProvider,
@@ -365,20 +363,17 @@ pub fn run() {
             provider_environment::refresh_for_next_launch(storage.clone());
             app.manage(Arc::new(PanelResizeSession::new(storage.clone())));
             app_debug!("cache", "application database opened");
-            let pricing = Arc::new(PricingStore::new(app_data_dir.join("pricing"))?);
-            let mut providers = claude::runtimes(storage.clone(), pricing.clone())?;
+            let mut providers = claude::runtimes(storage.clone())?;
             providers.extend(vec![
-                Arc::new(CodexProvider::new(storage.clone(), pricing.clone())?)
-                    as Arc<dyn UsageProvider>,
-                Arc::new(CursorProvider::new(pricing.clone())?) as Arc<dyn UsageProvider>,
+                Arc::new(CodexProvider::new(storage.clone())?) as Arc<dyn UsageProvider>,
+                Arc::new(CursorProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(AntigravityProvider::new(
                     app_data_dir.join("antigravity").join("auth.json"),
                 )?) as Arc<dyn UsageProvider>,
                 Arc::new(CopilotProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(DevinProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(GrokProvider::new(storage.clone(), pricing.clone())?)
-                    as Arc<dyn UsageProvider>,
-                Arc::new(OpenCodeProvider::new(pricing.clone())) as Arc<dyn UsageProvider>,
+                Arc::new(GrokProvider::new()?) as Arc<dyn UsageProvider>,
+                Arc::new(OpenCodeProvider::new()) as Arc<dyn UsageProvider>,
                 Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,

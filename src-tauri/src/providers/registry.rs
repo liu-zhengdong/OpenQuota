@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::models::{MetricSection, MetricSource, ProviderCatalog, ProviderDefinition};
+use crate::models::{MetricSection, ProviderCatalog, ProviderDefinition};
 
 use super::{CacheIdentity, UsageProvider};
 
@@ -121,13 +121,44 @@ impl ProviderRegistry {
             .collect()
     }
 
-    pub fn metric(&self, id: &str) -> Option<&crate::models::MetricDefinition> {
-        let (provider_index, metric_index) = *self.metric_indices.get(id)?;
+    pub fn metric(&self, id: &str) -> Option<crate::models::MetricDefinition> {
+        let Some(&(provider_index, metric_index)) = self.metric_indices.get(id) else {
+            let (provider, source) = id.split_once('.')?;
+            let prefix = self.definition(provider)?.scoped_quota_prefix.as_deref()?;
+            return self.scoped_metric(provider, source, source.strip_prefix(prefix)?);
+        };
         self.catalog
             .providers
             .get(provider_index)?
             .metrics
             .get(metric_index)
+            .cloned()
+    }
+
+    pub fn scoped_metric(
+        &self,
+        provider_id: &str,
+        source: &str,
+        label: &str,
+    ) -> Option<crate::models::MetricDefinition> {
+        let prefix = self
+            .definition(provider_id)?
+            .scoped_quota_prefix
+            .as_deref()?;
+        let slug = source.strip_prefix(prefix)?;
+        if slug.is_empty() || !slug.chars().all(|c| c.is_alphanumeric() || c == '-') {
+            return None;
+        }
+        Some(crate::models::MetricDefinition::quota(
+            &format!("{provider_id}.{source}"),
+            label,
+            source,
+            false,
+            true,
+            MetricSection::AlwaysVisible,
+            false,
+            label,
+        ))
     }
 
     #[cfg(test)]
@@ -220,12 +251,6 @@ fn validate_definition(
         {
             return Err(invalid(format!(
                 "metric `{}` has an empty source id",
-                metric.id
-            )));
-        }
-        if matches!(metric.source, MetricSource::Trend) && metric.pinnable {
-            return Err(invalid(format!(
-                "trend metric `{}` cannot be pinnable",
                 metric.id
             )));
         }
@@ -330,7 +355,7 @@ mod tests {
             display_name: "Provider".into(),
             short_name: "P".into(),
             fallback_enabled: true,
-            local_usage_source_note: None,
+            scoped_quota_prefix: None,
             links: vec![],
             metrics: vec![MetricDefinition::new(
                 format!("{id}.session"),
@@ -460,13 +485,6 @@ mod tests {
             Err(ProviderRegistryError::Invalid(message)) if message.contains("provider prefix")
         ));
 
-        let mut trend = definition("trend");
-        trend.metrics[0].source = MetricSource::Trend;
-        assert!(matches!(
-            ProviderRegistry::new(vec![runtime(trend)]),
-            Err(ProviderRegistryError::Invalid(message)) if message.contains("cannot be pinnable")
-        ));
-
         let mut empty_tray = definition("tray");
         empty_tray.metrics[0].tray.as_mut().unwrap().short_label = " ".into();
         assert!(matches!(
@@ -556,12 +574,8 @@ mod tests {
                 "codex.weekly",
                 "codex.spark",
                 "codex.sparkWeekly",
-                "codex.trend",
                 "codex.credits",
                 "codex.rateLimitResets",
-                "codex.today",
-                "codex.yesterday",
-                "codex.last30",
             ]
         );
         assert!(registry.definition("codex").unwrap().fallback_enabled);
@@ -587,12 +601,8 @@ mod tests {
         let serialized = serde_json::to_value(catalog).unwrap();
         assert_eq!(serialized["providers"][1]["displayName"], "Codex");
         assert_eq!(
-            serialized["providers"][1]["metrics"][6]["source"],
+            serialized["providers"][1]["metrics"][5]["source"],
             serde_json::json!({"kind":"value","sourceId":"rateLimitResets"})
-        );
-        assert_eq!(
-            serialized["providers"][1]["metrics"][9]["source"],
-            serde_json::json!({"kind":"usage","period":"last30Days"})
         );
     }
 }

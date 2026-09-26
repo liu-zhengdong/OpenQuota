@@ -36,21 +36,21 @@
   import Dashboard from './lib/Dashboard.svelte';
   import Icon from './lib/Icon.svelte';
   import { createListenerRegistry } from './lib/listenerRegistry';
-  import { emptyProviderCatalog, ProviderCatalogIndex } from './lib/metrics';
+  import {
+    emptyProviderCatalog,
+    ProviderCatalogIndex,
+    withSnapshotMetrics,
+    withCatalogLayouts,
+  } from './lib/metrics';
   import { springMotion } from './lib/motion';
   import OpenQuotaMark from './lib/OpenQuotaMark.svelte';
   import { horizontalPageTransition, shouldSlideBetweenScreens } from './lib/pageTransition';
   import { desktopPlatform, shortcutLabels } from './lib/platform';
   import { withProviderName } from './lib/providerNames';
   import RenameProviderSheet from './lib/RenameProviderSheet.svelte';
-  import {
-    buildProviderShareRows,
-    renderProviderShareCard,
-    renderTotalSpendShareCard,
-  } from './lib/shareCard';
+  import { buildProviderShareRows, renderProviderShareCard } from './lib/shareCard';
   import SettingsScreen from './lib/SettingsScreen.svelte';
   import { SettingsController } from './lib/settingsController.svelte';
-  import type { SpendProjection } from './lib/totalSpend';
   import type { AppSettings, UsageViewState } from './lib/types';
   import { nextUpdateLabel, UpdateController } from './lib/updateController.svelte';
   import { automaticUpdateDelay, UPDATE_CHECK_INTERVAL_MS } from './lib/updateSchedule';
@@ -61,7 +61,8 @@
   const emptyView: UsageViewState = { providers: {} };
 
   let viewState = $state<UsageViewState>(emptyView);
-  let catalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
+  let baseCatalog = $state<ProviderCatalogIndex>(emptyProviderCatalog);
+  const catalog = $derived(withSnapshotMetrics(baseCatalog, viewState));
   let screen = $state<Screen>('dashboard');
   let now = $state(Date.now());
   let settingsError = $state<string | null>(null);
@@ -91,7 +92,7 @@
   const platform = desktopPlatform();
   const shortcuts = shortcutLabels(platform);
   const settingsController = new SettingsController((message) => (settingsError = message));
-  const settingsState = $derived(settingsController.state);
+  const settingsState = $derived(withCatalogLayouts(settingsController.state, catalog));
   const reducedMotion = $derived(
     systemReducedMotion || Boolean(settingsState?.settings.reduceAnimations),
   );
@@ -444,25 +445,6 @@
       settingsError = 'Provider screenshot could not be copied.';
     }
   }
-  async function shareTotalSpend(projection: SpendProjection) {
-    const current = settingsState;
-    if (!current) return false;
-    const card = document.querySelector<HTMLElement>('[data-total-spend]');
-    if (!card) return false;
-    try {
-      const canvas = renderTotalSpendShareCard(catalog, {
-        projection,
-        providerNames: current.settings.providerNames,
-        metric: current.settings.totalSpendMetric,
-        period: current.settings.totalSpendPeriod,
-      });
-      await copyCanvas(canvas, card.innerText.trim());
-      return true;
-    } catch {
-      settingsError = 'Total Spend screenshot could not be copied.';
-      return false;
-    }
-  }
   async function copyLogPath() {
     const path = await getLogPath();
     await navigator.clipboard.writeText(path);
@@ -749,7 +731,7 @@
     );
     void getBootstrapState()
       .then((state) => {
-        catalog = new ProviderCatalogIndex(state.catalog);
+        baseCatalog = new ProviderCatalogIndex(state.catalog);
         viewState = state.usage;
         settingsController.setState(state.settings);
         automaticUpdatesReady = true;
@@ -871,7 +853,6 @@
                 onOpenProviderCustomize={(id) => void openProviderCustomization(id, true)}
                 onRenameProvider={openRenameProvider}
                 onShare={shareProvider}
-                onShareTotal={shareTotalSpend}
                 onRefresh={refreshProvider}
                 onOpenProviderLink={openProviderLink}
                 onContentMorph={beginContentMorph}
@@ -1054,7 +1035,7 @@
     {#if settingsResetConfirmationOpen}
       <ConfirmationSheet
         title="Reset All Settings?"
-        message="This restores appearance, notifications, shortcuts, updates, panel sizing, provider names, and layout. Provider sign-ins, API keys, and usage history stay in place. This cannot be undone."
+        message="This restores appearance, notifications, shortcuts, updates, panel sizing, provider names, and layout. Provider sign-ins and API keys stay in place. This cannot be undone."
         confirmLabel="Reset All"
         pending={resettingAllSettings}
         onConfirm={() => void confirmAllSettingsReset()}
@@ -1095,7 +1076,7 @@
           <OpenQuotaMark size={44} />
           <h1>OpenQuota</h1>
           <p>Version {appVersion}</p>
-          <small>Private, local usage monitoring for your AI coding tools.</small>
+          <small>Cloud quota monitoring for your AI coding tools.</small>
         </div>
       </div>
     {/if}

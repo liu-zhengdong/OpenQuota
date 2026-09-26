@@ -9,9 +9,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::models::{
-    MetricDefinition, MetricSection, ProviderDefinition, ProviderSnapshot, UsageHistory,
-};
+use crate::models::{MetricDefinition, MetricSection, ProviderDefinition, ProviderSnapshot};
 
 use self::{
     auth::{load_token, AccessTokenCache},
@@ -34,7 +32,7 @@ pub(crate) fn definition() -> ProviderDefinition {
         display_name: "Antigravity".into(),
         short_name: "A".into(),
         fallback_enabled: false,
-        local_usage_source_note: None,
+        scoped_quota_prefix: None,
         links: vec![],
         metrics: vec![
             MetricDefinition::quota(
@@ -372,7 +370,6 @@ fn snapshot(plan: Option<String>, quotas: Vec<crate::models::QuotaWindow>) -> Pr
         value_metrics: Vec::new(),
         status_metrics: Vec::new(),
         notices: Vec::new(),
-        usage: UsageHistory::default(),
         warnings: Vec::new(),
         refreshed_at: Utc::now(),
     }

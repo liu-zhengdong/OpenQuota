@@ -57,7 +57,7 @@ describe('OpenQuota update lifecycle', () => {
           version: null,
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.reject(new Error(`unexpected command ${command}`));
     });
@@ -122,7 +122,7 @@ describe('OpenQuota update lifecycle', () => {
           version: '0.2.0',
           body: 'New release',
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       return Promise.resolve();
     });
@@ -156,7 +156,7 @@ describe('OpenQuota update lifecycle', () => {
           version: '0.2.0',
           body: null,
           installable: false,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       if (command === 'open_update_page') return Promise.resolve();
       return Promise.resolve();
@@ -188,7 +188,7 @@ describe('OpenQuota update lifecycle', () => {
           version: '0.2.0',
           body: 'Safer updates',
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       if (command === 'install_update') return Promise.resolve();
       return Promise.resolve();
@@ -233,7 +233,7 @@ describe('OpenQuota update lifecycle', () => {
           version: '0.2.0',
           body: null,
           installable: true,
-          releaseUrl: 'https://github.com/deviffyy/OpenQuota/releases/latest',
+          releaseUrl: 'https://github.com/liu-zhengdong/OpenQuota/releases/latest',
         });
       if (command === 'install_update')
         return Promise.reject({

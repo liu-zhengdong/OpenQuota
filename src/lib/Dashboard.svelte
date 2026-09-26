@@ -9,8 +9,6 @@
   import ProviderNoticeRow from './ProviderNoticeRow.svelte';
   import Icon from './Icon.svelte';
   import MetricRenderer from './MetricRenderer.svelte';
-  import TotalSpend from './TotalSpend.svelte';
-  import type { SpendProjection } from './totalSpend';
   import type { ProviderCatalogIndex } from './metrics';
   import { canRenameProvider } from './providerNames';
   import type {
@@ -20,7 +18,6 @@
     ProviderSnapshot,
     UpdateProgress,
     UpdateFailure,
-    UsageHistory,
     UsageViewState,
     UpdateStatus,
   } from './types';
@@ -39,7 +36,6 @@
     onOpenProviderCustomize: (providerId: string) => void;
     onRenameProvider: (providerId: string) => void;
     onShare: (providerId: string) => void;
-    onShareTotal: (projection: SpendProjection) => boolean | Promise<boolean>;
     onRefresh: (providerId: string) => void | Promise<void>;
     onOpenProviderLink: (providerId: string, linkIndex: number) => void;
     onContentMorph: () => void;
@@ -65,7 +61,6 @@
     onOpenProviderCustomize,
     onRenameProvider,
     onShare,
-    onShareTotal,
     onRefresh,
     onOpenProviderLink,
     onContentMorph,
@@ -79,14 +74,6 @@
   }: Props = $props();
   const metricDefinition = (id: string) => catalog.metric(id);
   const providerDisplayName = (id: string) => catalog.displayName(id, settings.providerNames);
-  const providerSupportsSpend = (id: string) => catalog.supportsSpend(id);
-  const emptyUsage: UsageHistory = {
-    today: null,
-    yesterday: null,
-    last30Days: null,
-    daily: [],
-    unknownModels: [],
-  };
   function emptyProviderSnapshot(providerId: string): ProviderSnapshot {
     return {
       providerId,
@@ -95,7 +82,6 @@
       valueMetrics: [],
       statusMetrics: [],
       notices: [],
-      usage: emptyUsage,
       warnings: [],
       refreshedAt: '1970-01-01T00:00:00.000Z',
     };
@@ -134,15 +120,6 @@
       };
     }),
   );
-  const providerUsage = $derived(
-    enabledProviders
-      .filter((provider) => providerSupportsSpend(provider.id))
-      .map((provider) => ({
-        id: provider.id,
-        usage: viewState.providers[provider.id]?.snapshot?.usage ?? emptyUsage,
-      })),
-  );
-
   function updateProvider(next: ProviderLayout, customization = true) {
     const changed = {
       ...settings,
@@ -405,16 +382,6 @@
       ><Icon name="close" size={10} strokeWidth={2.2} /></button
     >
   </section>
-{/if}
-
-{#if settings.showTotalSpend && providerUsage.length > 0}
-  <TotalSpend
-    providers={providerUsage}
-    {settings}
-    {catalog}
-    onChange={onSettingsChange}
-    onShare={onShareTotal}
-  />
 {/if}
 
 {#each dashboardProviders as { provider, state, snapshot, alwaysMetrics, demandMetrics, links } (provider.id)}

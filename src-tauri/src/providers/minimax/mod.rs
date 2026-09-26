@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::models::{
     ApiKeyStatus, MetricDefinition, MetricSection, ProviderDefinition, ProviderErrorKind,
-    ProviderLink, ProviderSnapshot, UsageHistory,
+    ProviderLink, ProviderSnapshot,
 };
 
 use self::{
@@ -27,7 +27,7 @@ pub(crate) fn definition() -> ProviderDefinition {
         display_name: "MiniMax".into(),
         short_name: "M".into(),
         fallback_enabled: false,
-        local_usage_source_note: None,
+        scoped_quota_prefix: None,
         links: vec![
             ProviderLink::new("Dashboard", "https://platform.minimax.io/console/plan"),
             ProviderLink::new("API Keys", "https://platform.minimax.io/console/access"),
@@ -125,7 +125,6 @@ impl MiniMaxProvider {
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
-            usage: UsageHistory::default(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
         })
