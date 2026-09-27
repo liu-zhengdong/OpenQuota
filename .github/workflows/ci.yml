@@ -169,6 +169,7 @@ jobs:
           echo "Checking $app"
           codesign -d -r- "$app" 2>&1 | tail -1
           codesign --verify --deep --strict "$app"
+          if [[ -n "${mount:-}" ]]; then hdiutil detach "$mount" >/dev/null; fi
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
