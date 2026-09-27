@@ -14,7 +14,9 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 #[cfg(target_os = "macos")]
-use crate::providers::credential_store::read_generic_password;
+use crate::providers::credential_store::{
+    read_generic_password, read_generic_password_for_service,
+};
 use crate::{
     child_process::background_command, providers::credential_store::decode_go_keyring_value,
 };
@@ -99,17 +101,8 @@ impl CredentialAccess for SystemCredentials {
 
     #[cfg(target_os = "macos")]
     fn read_service(&self, service: &str) -> Option<Vec<u8>> {
-        use security_framework::passwords::{generic_password, PasswordOptions};
-
-        // `PasswordOptions` has no service-only constructor. Its generic-password
-        // constructor appends the account constraint last, so removing that one
-        // constraint yields the same service-scoped query used by GitHub CLI.
-        let mut options = PasswordOptions::new_generic_password(service, "");
-        #[allow(deprecated)]
-        {
-            options.query.pop()?;
-        }
-        generic_password(options).ok()
+        // GitHub CLI looks its token up by service alone; so does this query.
+        read_generic_password_for_service(service).ok().flatten()
     }
 
     #[cfg(not(target_os = "macos"))]

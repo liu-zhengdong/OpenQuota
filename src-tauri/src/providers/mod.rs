@@ -14,6 +14,9 @@ pub mod minimax;
 pub mod opencode;
 pub mod openrouter;
 mod registry;
+#[cfg(any(target_os = "macos", test))]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub mod security_cli;
 #[cfg(test)]
 pub mod test_http;
 pub mod zai;
