@@ -950,7 +950,6 @@
           <span>OpenQuota {appVersion}</span><small
             >{anyRefreshing ? t('metrics.updating') : nextUpdateLabel(lastFullRefresh, now)}</small
           >
-          >
         </button>
         {#if screen === 'dashboard'}
           <div class="footer-actions">

@@ -161,7 +161,6 @@
               ? t('apiKey.add')
               : t('apiKey.edit')}</button
         >
-        >
       </div>
       {#if availabilityError}
         <div class="api-key-error availability-error" role="alert">{availabilityError}</div>
@@ -256,7 +255,6 @@
                       onkeydown={handleRemovalKeydown}
                       onclick={() => void remove()}
                       >{saving ? t('apiKey.removing') : t('apiKey.removeKey')}</button
-                    >
                     >
                   </div>
                 </div>

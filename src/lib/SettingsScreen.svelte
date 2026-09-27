@@ -417,7 +417,6 @@
       <button class="secondary-button settings-wide-button" type="button" onclick={copyLogPath}
         >{t('settings.copyLogPath')}</button
       >
-      >
     </div>
     <div class="setting-row setting-row--button">
       <button class="secondary-button settings-wide-button" type="button" onclick={revealLogFile}
@@ -432,7 +431,6 @@
         class="secondary-button settings-wide-button settings-reset-button"
         type="button"
         onclick={onResetAllSettings}>{t('settings.resetAllSettings')}</button
-      >
       >
     </div>
   </div>
@@ -453,7 +451,6 @@
         disabled={checkingUpdate}
         onclick={onCheckForUpdates}
         >{checkingUpdate ? t('settings.checkingUpdates') : t('settings.checkForUpdates')}</button
-      >
       >
     </div>
     {#if updateError}<div class="settings-update-error" role="alert">

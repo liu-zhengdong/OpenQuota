@@ -88,8 +88,7 @@
             ><b>{providerDisplayName(provider.id)}</b><small
               >{t('common.metricsCount', { count: provider.metrics.length })}</small
             >
-            ></span
-          ></button
+          </span></button
         >
         <label class="switch"
           ><input
