@@ -53,6 +53,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "5.1", default-features = false, features = ["rt-async-io-crypto-rust"] }
+x11-dl = "2.21"
 zbus = "5.13"
 
 [dev-dependencies]

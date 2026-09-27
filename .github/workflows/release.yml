@@ -274,6 +274,7 @@ jobs:
             xdg-utils \
             patchelf \
             weston \
+            wmctrl \
             xdotool \
             xvfb
 
