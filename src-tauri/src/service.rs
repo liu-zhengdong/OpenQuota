@@ -1493,34 +1493,114 @@ mod tests {
         let directory = tempdir().unwrap();
         let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
         let active = Arc::new(AtomicUsize::new(0));
-        let maximum = Arc::new(AtomicUsize::new(0));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let providers = [
-            ("slow", Duration::from_millis(160)),
-            ("fast", Duration::ZERO),
-        ]
-        .into_iter()
-        .map(|(id, delay)| {
-            Arc::new(SlowProvider {
-                id,
-                calls: calls.clone(),
-                active: active.clone(),
-                maximum: maximum.clone(),
-                delay,
-            }) as Arc<dyn UsageProvider>
-        })
-        .collect();
-        let registry = Arc::new(ProviderRegistry::new(providers).unwrap());
-        let service = Arc::new(ProviderService::with_refresh_timeout(
-            registry,
-            storage.clone(),
-            Duration::from_millis(40),
-        ));
+        let ready_calls = Arc::new(AtomicUsize::new(0));
+        let gated_calls = Arc::new(AtomicUsize::new(0));
+        let ready = Arc::new(SlowProvider {
+            id: "ready",
+            calls: ready_calls.clone(),
+            active: active.clone(),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        // The gate opens only from the first progress callback, so the second provider cannot
+        // complete before the first observation is recorded. Nothing here waits on wall-clock time,
+        // unlike the earlier 40ms-timeout version, which failed intermittently on loaded CI runners.
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let gated = Arc::new(GatedProvider {
+            id: "gated",
+            calls: gated_calls.clone(),
+            active: active.clone(),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            gate: gate.clone(),
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![ready, gated]).unwrap());
+        let service = Arc::new(ProviderService::new(registry, storage.clone()));
         let observations = Arc::new(Mutex::new(Vec::new()));
         let observed = observations.clone();
 
         let final_state = tauri::async_runtime::block_on(service.refresh_enabled_with_progress(
-            &["slow".into(), "fast".into()],
+            &["gated".into(), "ready".into()],
+            true,
+            move |state| {
+                let mut observations = observed.lock().unwrap();
+                let first = observations.is_empty();
+                observations.push(state.clone());
+                drop(observations);
+                if first {
+                    let (released, signal) = &*gate;
+                    *released.lock().unwrap() = true;
+                    signal.notify_all();
+                }
+            },
+        ));
+
+        let observations = observations.lock().unwrap();
+        assert_eq!(observations.len(), 2);
+        let first = observations.first().unwrap();
+        assert!(first
+            .providers
+            .get("ready")
+            .and_then(|state| state.snapshot.as_ref())
+            .is_some());
+        let still_running = first.providers.get("gated").unwrap();
+        assert!(still_running.snapshot.is_none());
+        assert!(still_running.error.is_none());
+
+        let completed = observations.last().unwrap();
+        assert!(completed
+            .providers
+            .get("ready")
+            .and_then(|state| state.snapshot.as_ref())
+            .is_some());
+        let gated_state = completed.providers.get("gated").unwrap();
+        assert_eq!(
+            gated_state
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.plan.as_deref()),
+            Some("live-1")
+        );
+        assert!(gated_state.error.is_none());
+        drop(observations);
+
+        assert!(storage.load_snapshot("ready").unwrap().is_some());
+        assert_eq!(
+            final_state
+                .providers
+                .get("gated")
+                .and_then(|state| state.snapshot.as_ref())
+                .and_then(|snapshot| snapshot.plan.as_deref()),
+            Some("live-1")
+        );
+        assert_eq!(ready_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(gated_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn progress_reports_a_failed_provider_without_persisting_a_snapshot() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let failing = Arc::new(SequenceProvider {
+            id: "failing",
+            calls: calls.clone(),
+            failures_before_success: usize::MAX,
+        }) as Arc<dyn UsageProvider>;
+        let healthy = Arc::new(SlowProvider {
+            id: "healthy",
+            calls: calls.clone(),
+            active: Arc::new(AtomicUsize::new(0)),
+            maximum: Arc::new(AtomicUsize::new(0)),
+            delay: Duration::ZERO,
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![failing, healthy]).unwrap());
+        let service = Arc::new(ProviderService::new(registry, storage.clone()));
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let observed = observations.clone();
+
+        let final_state = tauri::async_runtime::block_on(service.refresh_enabled_with_progress(
+            &["failing".into(), "healthy".into()],
             true,
             move |state| {
                 observed.lock().unwrap().push(state.clone());
@@ -1529,33 +1609,34 @@ mod tests {
 
         let observations = observations.lock().unwrap();
         assert_eq!(observations.len(), 2);
-        let completed = observations.last().unwrap();
-        assert!(completed
+        let failed = observations
+            .last()
+            .unwrap()
             .providers
-            .get("fast")
+            .get("failing")
+            .unwrap();
+        assert_eq!(failed.error.as_deref(), Some("offline"));
+        assert_eq!(failed.error_kind, Some(ProviderErrorKind::Network));
+        assert!(failed.snapshot.is_none());
+        assert!(observations
+            .last()
+            .unwrap()
+            .providers
+            .get("healthy")
             .and_then(|state| state.snapshot.as_ref())
             .is_some());
-        assert_eq!(
-            completed
-                .providers
-                .get("slow")
-                .and_then(|state| state.error.as_deref()),
-            Some("Provider refresh timed out.")
-        );
-        assert!(storage.load_snapshot("fast").unwrap().is_some());
+        drop(observations);
+
         assert_eq!(
             final_state
                 .providers
-                .get("slow")
+                .get("failing")
                 .and_then(|state| state.error.as_deref()),
-            Some("Provider refresh timed out.")
+            Some("offline")
         );
-        drop(observations);
-
-        wait_until("timed-out progress worker should drain", || {
-            active.load(Ordering::SeqCst) == 0 && refresh_runner_is_idle(&service, "slow")
-        });
-        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert!(storage.load_snapshot("failing").unwrap().is_none());
+        assert!(storage.load_snapshot("healthy").unwrap().is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]
