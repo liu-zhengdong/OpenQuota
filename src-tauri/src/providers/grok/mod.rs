@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::models::{
     MetricDefinition, MetricSection, ProviderDefinition, ProviderErrorKind, ProviderLink,
-    ProviderSnapshot,
+    ProviderMessage, ProviderSnapshot,
 };
 
 use self::{
@@ -159,6 +159,7 @@ impl GrokProvider {
 
             warnings,
             refreshed_at: now,
+            remembered: false,
         })
     }
 
@@ -166,7 +167,7 @@ impl GrokProvider {
         &self,
         state: &mut GrokAuthState,
         now: DateTime<Utc>,
-        warnings: &mut Vec<String>,
+        warnings: &mut Vec<ProviderMessage>,
     ) -> Result<(), GrokError> {
         let refresh_token = self
             .auth
@@ -188,10 +189,10 @@ impl GrokProvider {
                 "auth:grok",
                 "failed to persist rotated credentials; using them for this session only"
             );
-            warnings.push(
-                "The refreshed Grok login is active for this session but could not be saved."
-                    .into(),
-            );
+            warnings.push(ProviderMessage::new(
+                "grok.credentialNotSaved",
+                "The refreshed Grok login is active for this session but could not be saved.",
+            ));
         }
         Ok(())
     }

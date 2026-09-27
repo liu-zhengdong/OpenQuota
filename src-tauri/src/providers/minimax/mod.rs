@@ -127,6 +127,7 @@ impl MiniMaxProvider {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         })
     }
 }

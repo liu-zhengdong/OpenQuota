@@ -818,6 +818,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let evaluator = NotificationEvaluator::default();
 
@@ -910,6 +911,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: now,
+            remembered: false,
         };
         let evaluator = NotificationEvaluator::default();
 

@@ -16,6 +16,7 @@ use serde::Serialize;
 use crate::{
     models::{ProviderSnapshot, QuotaFormat, QuotaWindow},
     pacing,
+    policy::STALE_AFTER,
 };
 
 /// The report finished successfully and printed at least one provider.
@@ -43,6 +44,10 @@ Usage: openquota pace [--json] [--db <path>]
 
 Prints the latest cached provider quotas from the local OpenQuota database,
 opened read-only. No GUI, no network access, and no writes.
+
+The DATA column reads `cached` for a recent read and `stale` once the numbers are
+older than the panel's staleness window, so remembered values are never mistaken for
+current ones.
 
 Options:
   --json          Print a stable JSON array instead of a text table
@@ -208,6 +213,9 @@ struct PaceRow {
     short_window_used_percent: Option<f64>,
     refreshed_at: String,
     refreshed_hours_ago: f64,
+    /// The row is older than the staleness the desktop panel marks, so its numbers
+    /// are a remembered last read rather than a current one.
+    stale: bool,
 }
 
 #[derive(Debug, Default)]
@@ -364,6 +372,7 @@ fn build_row(snapshot: ProviderSnapshot, now: DateTime<Utc>) -> PaceRow {
             .refreshed_at
             .to_rfc3339_opts(SecondsFormat::Secs, true),
         refreshed_hours_ago: round1(hours_between(snapshot.refreshed_at, now).max(0.0)),
+        stale: now.signed_duration_since(snapshot.refreshed_at) >= STALE_AFTER,
     }
 }
 
@@ -495,8 +504,8 @@ fn home_directory() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
-const TEXT_COLUMNS: usize = 10;
-const RIGHT_ALIGNED: [usize; 7] = [3, 4, 5, 6, 7, 8, 9];
+const TEXT_COLUMNS: usize = 11;
+const RIGHT_ALIGNED: [usize; 7] = [3, 4, 5, 6, 7, 8, 10];
 
 fn format_table(rows: &[PaceRow]) -> String {
     const HEADERS: [&str; TEXT_COLUMNS] = [
@@ -510,6 +519,7 @@ fn format_table(rows: &[PaceRow]) -> String {
         "SHORT%",
         "REFRESHED",
         "AGE(h)",
+        "DATA",
     ];
     let mut table = vec![HEADERS.map(str::to_owned)];
     table.extend(rows.iter().map(text_cells));
@@ -555,6 +565,7 @@ fn text_cells(row: &PaceRow) -> [String; TEXT_COLUMNS] {
         percent(row.short_window_used_percent),
         row.refreshed_at.clone(),
         hours(row.refreshed_hours_ago.into()),
+        if row.stale { "stale" } else { "cached" }.to_owned(),
     ]
 }
 
@@ -587,6 +598,7 @@ mod tests {
         EXIT_READ_FAILURE, EXIT_SUCCESS, EXIT_USAGE,
     };
     use crate::models::{ProviderSnapshot, QuotaFormat, QuotaWindow};
+    use crate::policy::STALE_AFTER;
 
     fn now() -> DateTime<Utc> {
         Utc.timestamp_opt(1_800_000_000, 0).unwrap()
@@ -624,6 +636,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: now(),
+            remembered: false,
         }
     }
 
@@ -790,6 +803,7 @@ mod tests {
                 "shortWindowUsedPercent": 25.0,
                 "refreshedAt": "2027-01-15T08:00:00Z",
                 "refreshedHoursAgo": 0.0,
+                "stale": false,
             })
         );
     }
@@ -825,6 +839,22 @@ mod tests {
         assert_eq!(widths.len(), 1, "every line has the same width: {table:?}");
         assert!(lines[2].contains("claude-max"));
         assert!(!table.ends_with(" \n"));
+    }
+
+    #[test]
+    fn rows_are_labelled_stale_once_they_pass_the_staleness_window() {
+        let recent = snapshot("claude", vec![]);
+        let mut old = snapshot("codex", vec![]);
+        old.refreshed_at = now() - STALE_AFTER - chrono::Duration::seconds(60);
+
+        assert!(!build_row(recent.clone(), now()).stale);
+        assert!(build_row(old.clone(), now()).stale);
+
+        let table = format_table(&[build_row(recent, now()), build_row(old, now())]);
+        let lines = table.lines().collect::<Vec<_>>();
+        assert!(lines[0].ends_with("DATA"));
+        assert!(lines[1].ends_with("cached"), "{table}");
+        assert!(lines[2].ends_with("stale"), "{table}");
     }
 
     #[test]

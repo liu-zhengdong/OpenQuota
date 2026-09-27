@@ -372,6 +372,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
 
         storage.save_snapshot(&snapshot).unwrap();
@@ -396,6 +397,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
 
         storage
@@ -540,6 +542,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
 
         storage.save_snapshot(&snapshot).unwrap();

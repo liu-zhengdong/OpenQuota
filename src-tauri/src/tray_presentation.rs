@@ -587,6 +587,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let provider_state = ProviderViewState {
             snapshot: Some(snapshot),
@@ -666,6 +667,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let catalog = ProviderRegistry::from_definitions(vec![cursor::definition()]).unwrap();
         let definition = catalog.metric("cursor.requests").unwrap();
@@ -775,6 +777,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let catalog = ProviderRegistry::from_definitions(vec![codex::definition()]).unwrap();
         let metric = super::tray_metric(
@@ -805,6 +808,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let definition = MetricDefinition::status(
             "grok.payAsYouGo",

@@ -373,7 +373,7 @@ impl CursorProvider {
 
 fn snapshot(
     mapped: mapper::CursorMappedUsage,
-    warnings: Vec<String>,
+    warnings: Vec<crate::models::ProviderMessage>,
     refreshed_at: chrono::DateTime<Utc>,
 ) -> ProviderSnapshot {
     ProviderSnapshot {
@@ -386,6 +386,7 @@ fn snapshot(
 
         warnings,
         refreshed_at,
+        remembered: false,
     }
 }
 
