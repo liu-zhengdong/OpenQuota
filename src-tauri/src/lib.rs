@@ -343,6 +343,23 @@ pub(crate) fn autostart_is_enabled(app: &AppHandle) -> Result<bool, ()> {
     }
 }
 
+/// The GTK/WebKitGTK stack reaches the shared Xlib connection from more than
+/// one thread, and nothing in it calls `XInitThreads`. Without it the X11
+/// request stream can interleave shortly after the window appears, aborting
+/// with "[xcb] ... XInitThreads has not been called" or tripping GDK's X error
+/// handler with bogus errors. It must run before any other Xlib call, so
+/// before GTK starts.
+#[cfg(target_os = "linux")]
+fn enable_xlib_threads() {
+    if let Ok(xlib) = x11_dl::xlib::Xlib::open() {
+        // SAFETY: called once on the main thread before GTK or any other
+        // Xlib user has been initialized.
+        unsafe {
+            (xlib.XInitThreads)();
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Headless subcommands exit before any Tauri state exists, so they never
@@ -351,6 +368,8 @@ pub fn run() {
     if let Some(exit_code) = cli::dispatch(&arguments) {
         std::process::exit(exit_code);
     }
+    #[cfg(target_os = "linux")]
+    enable_xlib_threads();
 
     let builder = tauri::Builder::default();
     #[cfg(desktop)]

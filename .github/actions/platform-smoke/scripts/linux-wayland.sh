@@ -32,59 +32,107 @@ dbus-run-session -- bash -euo pipefail -c '
   stdio_log="${runner_temp}/openquota-wayland-app-${RANDOM}.log"
   runtime_log="${XDG_STATE_HOME}/openquota/logs/OpenQuota.log"
   weston_log="${runner_temp}/openquota-weston-${RANDOM}.log"
-  weston --backend=headless-backend.so --socket="${WAYLAND_DISPLAY}" --idle-time=0 \
-    --log="${weston_log}" &
-  weston_pid=$!
+  weston_pid=""
   app_pid=""
+  app_exit_detail=""
   cleanup() {
     if test -n "${app_pid}"; then
       kill "${app_pid}" 2>/dev/null || true
       wait "${app_pid}" 2>/dev/null || true
     fi
-    kill "${weston_pid}" 2>/dev/null || true
-    wait "${weston_pid}" 2>/dev/null || true
+    if test -n "${weston_pid}"; then
+      kill "${weston_pid}" 2>/dev/null || true
+      wait "${weston_pid}" 2>/dev/null || true
+    fi
   }
   trap cleanup EXIT
-  for _ in $(seq 1 20); do
-    if test -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"; then
-      break
+
+  dump_logs() {
+    local log
+    for log in "${stdio_log}" "${runtime_log}" "${weston_log}"; do
+      if test -s "${log}"; then
+        echo "----- ${log} -----" >&2
+        cat "${log}" >&2 || true
+      fi
+    done
+    if command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+      echo "----- kernel log (recent crash reports) -----" >&2
+      sudo -n dmesg 2>/dev/null | grep -E "segfault|traps:|general protection|Out of memory" | tail -n 20 >&2 || true
     fi
-    if ! kill -0 "${weston_pid}" 2>/dev/null; then
-      cat "${weston_log}"
-      exit 1
-    fi
-    sleep 1
-  done
-  if ! test -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"; then
-    cat "${weston_log}"
+  }
+
+  fail() {
+    dump_logs
+    echo "Linux Wayland smoke failed: $*" >&2
     exit 1
-  fi
+  }
+
+  reap_app() {
+    local status=0
+    wait "${app_pid}" 2>/dev/null || status=$?
+    app_pid=""
+    if test "${status}" -gt 128; then
+      app_exit_detail="was terminated by signal $(kill -l "$((status - 128))" 2>/dev/null || echo "?") (exit status ${status})"
+    else
+      app_exit_detail="exited with status ${status}"
+    fi
+    if test "${status}" -ne 0; then
+      local crash
+      crash="$(crash_summary)"
+      if test -n "${crash}"; then
+        app_exit_detail="${app_exit_detail} (crash output: ${crash})"
+      fi
+    fi
+  }
+
+  # Native crashes (Xlib aborts, GDK X errors, Rust panics) only reach the
+  # stdio log, and the AppImage runtime can mask the signal behind its own exit
+  # status, so the failure reason quotes the first crash lines directly.
+  crash_summary() {
+    test -f "${stdio_log}" || return 0
+    grep -E "^\[xcb\]|Assertion .* failed|Gdk-ERROR|Gdk-CRITICAL|X Window System error|The error was|panicked at" \
+      "${stdio_log}" 2>/dev/null | head -n 3 | tr "\n" " " | sed "s/ *$//" || true
+  }
+
+  runtime_log_has() {
+    test -f "${runtime_log}" && grep -Fq "$1" "${runtime_log}"
+  }
+
+  weston --backend=headless-backend.so --socket="${WAYLAND_DISPLAY}" --idle-time=0 \
+    --log="${weston_log}" &
+  weston_pid=$!
+  weston_deadline=$((SECONDS + 20))
+  until test -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}"; do
+    if ! kill -0 "${weston_pid}" 2>/dev/null; then
+      fail "weston exited before creating its Wayland socket."
+    fi
+    if test "${SECONDS}" -ge "${weston_deadline}"; then
+      fail "weston did not create its Wayland socket within 20s."
+    fi
+    sleep 0.25
+  done
+
   "${OPENQUOTA_SMOKE_BINARY}" >"${stdio_log}" 2>&1 &
   app_pid=$!
-  ready=false
-  for _ in $(seq 1 30); do
+  ready_deadline=$((SECONDS + 30))
+  while true; do
     if ! kill -0 "${app_pid}" 2>/dev/null; then
-      cat "${stdio_log}" >&2 || true
-      cat "${runtime_log}" >&2 || true
-      exit 1
+      reap_app
+      fail "OpenQuota ${app_exit_detail} before reporting a ready Wayland fallback."
     fi
-    if test -f "${runtime_log}" \
-      && grep -Fq "desktop integration detected (tray=false)" "${runtime_log}" \
-      && grep -Fq "OpenQuota startup completed" "${runtime_log}"; then
-      ready=true
+    if ! runtime_log_has "desktop integration detected (tray=false)"; then
+      pending="\"desktop integration detected (tray=false)\" in the runtime log"
+    elif ! runtime_log_has "OpenQuota startup completed"; then
+      pending="\"OpenQuota startup completed\" in the runtime log"
+    else
       break
     fi
-    sleep 1
+    if test "${SECONDS}" -ge "${ready_deadline}"; then
+      fail "OpenQuota did not report a ready Wayland fallback before the startup deadline (30s); still waiting for: ${pending}."
+    fi
+    sleep 0.25
   done
-  if test "${ready}" != true; then
-    cat "${stdio_log}" >&2 || true
-    cat "${runtime_log}" >&2 || true
-    cat "${weston_log}" >&2 || true
-    echo "OpenQuota did not report a ready Wayland fallback before the startup deadline." >&2
-    exit 1
-  fi
-  if grep -Fq "system tray integration ready" "${runtime_log}"; then
-    echo "OpenQuota created a tray while the Wayland tray host was unavailable." >&2
-    exit 1
+  if runtime_log_has "system tray integration ready"; then
+    fail "OpenQuota created a tray while the Wayland tray host was unavailable."
   fi
 '

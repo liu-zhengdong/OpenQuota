@@ -36,6 +36,7 @@ jobs:
             librsvg2-dev \
             patchelf \
             weston \
+            wmctrl \
             xdotool \
             xvfb
 

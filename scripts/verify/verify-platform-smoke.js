@@ -344,7 +344,10 @@ requireContracts('Linux X11 package smoke', linuxX11, [
   'kill "${watcher_pid}"',
   'system tray became unavailable; using standalone window',
   'xdotool search --onlyvisible --limit 1 --pid "${app_pid}" --name "^OpenQuota$"',
-  'xdotool windowclose',
+  'command -v wmctrl',
+  'wmctrl -i -c "${window_id}"',
+  'crash_summary',
+  'expected status 0',
   'close_attempted=false',
   'close_requested=false',
   'exited before its standalone window was closed',
@@ -354,6 +357,7 @@ requireContracts('Linux X11 package smoke', linuxX11, [
 
 requireContracts('Linux Wayland package smoke', linuxWayland, [
   'weston --backend=headless-backend.so',
+  'crash_summary',
   'desktop integration detected (tray=false)',
   'OpenQuota startup completed',
   'system tray integration ready',
