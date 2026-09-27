@@ -11,7 +11,7 @@ use crate::{
     service::UsageViewState,
     settings::SettingsService,
     tray_presentation,
-    window::{show_main_window, MAIN_WINDOW},
+    window::{dispatch_to_main_thread, show_main_window, MAIN_WINDOW},
 };
 
 pub fn permission(app: &AppHandle) -> &'static str {
@@ -118,10 +118,9 @@ fn show(app: &AppHandle, locale: UiLocale, title: &str, body: &str) -> Result<()
             if !response_opens_window(response) {
                 return;
             }
-            let app_for_window = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                app_for_window.state::<PopupDismissGuard>().cancel_pending();
-                if let Some(window) = app_for_window.get_webview_window(MAIN_WINDOW) {
+            dispatch_to_main_thread(&app, |app| {
+                app.state::<PopupDismissGuard>().cancel_pending();
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
                     show_main_window(&window);
                 }
             });
