@@ -65,6 +65,25 @@ describe('popover geometry contract', () => {
     expect(css).not.toMatch(/\.provider-section:focus\s*{/);
   });
 
+  it('draws reorder grip focus rings inside the clipped screen stage', () => {
+    const ringRule =
+      componentCss.match(
+        /\.drag-grip:focus-visible,\s*\.reorder-grip:focus-visible,\s*\.metric-reorder-handle:focus-visible\s*{([^}]*)}/,
+      )?.[1] ?? '';
+    expect(ringRule).toContain('outline: 2px solid');
+    expect(ringRule).toMatch(/outline-offset: -\d+px;/);
+    expect(componentCss).toMatch(
+      /\.metric-reorder-handle:focus-visible\s*{[^}]*outline-offset: -2px;/s,
+    );
+    // The grip box must match its 13px icon, otherwise the ring sits beside the visible dots.
+    expect(coLocatedComponentCss).toMatch(/\.drag-grip\s*{[^}]*width: 13px;[^}]*height: 13px;/s);
+    // Component styles hide the metric handle, which outranks the shared focus rule.
+    expect(coLocatedComponentCss).toMatch(
+      /\.metric-reorder-handle:focus-visible\s*{[^}]*opacity: 1;/s,
+    );
+    expect(coLocatedComponentCss).toMatch(/\.content:focus\s*{[^}]*outline: none;/s);
+  });
+
   it('keeps shared rules below component-owned styles regardless of bundle order', () => {
     expect(tokensCss).toContain('@layer tokens, base, shared;');
     expect(baseCss).toContain('@layer base');

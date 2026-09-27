@@ -118,6 +118,9 @@
   let panelHeightModeMutation: Promise<void> = Promise.resolve();
   let renameCard = $state<{ id: string; initialValue: string } | null>(null);
   let lastResizeGripPointerAt = Number.NEGATIVE_INFINITY;
+  // The panel opens from a shortcut or the tray, so WebKit treats its first focus as keyboard
+  // focus and would ring the first reorder grip. Each opening starts on the scroll area instead.
+  let panelFocusPending = true;
   let panelResizeOperation: Promise<void> | null = null;
   const windowController = createWindowController({
     screen: () => screen,
@@ -179,6 +182,21 @@
     const content = document.querySelector<HTMLElement>('.content');
     if (content && typeof content.scrollTo === 'function') content.scrollTo({ top: 0 });
     else if (content) content.scrollTop = 0;
+  }
+  function focusPanelContent() {
+    document.querySelector<HTMLElement>('.content')?.focus({ preventScroll: true });
+  }
+  function settlePanelFocus() {
+    if (!panelFocusPending) return;
+    panelFocusPending = false;
+    focusPanelContent();
+    // WebKit can move focus to the first focusable element right after the window focus event.
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active === document.body || active?.closest('[data-reorder-handle]')) {
+        focusPanelContent();
+      }
+    });
   }
   function quitApp() {
     void quitApplication();
@@ -663,6 +681,7 @@
     updateMotionPreference();
     motionQuery.addEventListener('change', updateMotionPreference);
     const refreshWindowState = () => {
+      settlePanelFocus();
       void settingsController.refreshIfIdle();
       updatePanelResizeEdge();
       updatePanelHeightMode();
@@ -671,6 +690,7 @@
     updatePanelResizeEdge();
     updatePanelHeightMode();
     window.addEventListener('focus', refreshWindowState);
+    if (document.hasFocus()) settlePanelFocus();
 
     const popover = document.querySelector<HTMLElement>('.popover');
     const resizeObserver =
@@ -744,6 +764,8 @@
       onMainWindowHidden(() => {
         resetTransientUi();
         navigate('dashboard');
+        panelFocusPending = true;
+        focusPanelContent();
       }),
     );
     listeners.add(
@@ -848,7 +870,7 @@
         {/if}
       </header>
     {/if}
-    <div class="content" class:content--chrome={screen !== 'dashboard'}>
+    <div class="content" class:content--chrome={screen !== 'dashboard'} tabindex="-1">
       {#if settingsError}<div class="notice notice--blocking" role="alert">
           {settingsError}
         </div>{/if}
@@ -1301,6 +1323,10 @@
       overflow-y: auto;
       scrollbar-width: none;
       overflow-x: hidden;
+    }
+
+    .content:focus {
+      outline: none;
     }
 
     .content::-webkit-scrollbar {
