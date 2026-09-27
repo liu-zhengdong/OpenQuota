@@ -206,9 +206,9 @@ fn save_file_document(path: &Path, document: &Value) -> Result<(), CodexError> {
 
 #[cfg(target_os = "macos")]
 fn keychain_document() -> Option<Value> {
-    use security_framework::passwords::{generic_password, PasswordOptions};
-
-    let bytes = generic_password(PasswordOptions::new_generic_password("Codex Auth", "")).ok()?;
+    let bytes = crate::providers::credential_store::read_generic_password("Codex Auth", "")
+        .ok()
+        .flatten()?;
     parse_auth_document(std::str::from_utf8(&bytes).ok()?)
 }
 
@@ -255,10 +255,10 @@ fn load_from_keychain() -> Result<CodexAuthState, CodexError> {
 
 #[cfg(target_os = "macos")]
 fn save_keychain_document(document: &Value) -> Result<(), CodexError> {
-    use security_framework::passwords::set_generic_password;
-
-    let bytes = serde_json::to_vec(document).map_err(|_| CodexError::AuthWrite)?;
-    set_generic_password("Codex Auth", "", &bytes).map_err(|_| CodexError::AuthWrite)
+    let bytes =
+        zeroize::Zeroizing::new(serde_json::to_vec(document).map_err(|_| CodexError::AuthWrite)?);
+    crate::providers::credential_store::write_generic_password("Codex Auth", "", &bytes)
+        .map_err(|_| CodexError::AuthWrite)
 }
 
 pub fn auth_paths() -> Vec<PathBuf> {

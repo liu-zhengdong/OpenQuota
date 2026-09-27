@@ -21,36 +21,219 @@ pub fn generic_password_service_exists(
     }
 }
 
+/// Reads another tool's item through `/usr/bin/security`, which those tools already
+/// trust, so an OpenQuota update does not trigger a new Keychain prompt.
 #[cfg(target_os = "macos")]
 pub fn read_generic_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
-    use security_framework::passwords::{generic_password, PasswordOptions};
+    macos::cli()
+        .read(service, Some(account))
+        .map(|value| value.map(|value| value.to_vec()))
+        .map_err(|error| {
+            crate::app_warn!("keychain", "generic password read failed: {error}");
+            "The macOS Keychain could not be read.".into()
+        })
+}
 
-    match generic_password(PasswordOptions::new_generic_password(service, account)) {
-        Ok(value) => Ok(Some(value)),
-        Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => Ok(None),
-        Err(_) => Err("The macOS Keychain could not be read.".into()),
-    }
+/// Reads the first item of `service`, whatever its account.
+#[cfg(target_os = "macos")]
+pub fn read_generic_password_for_service(service: &str) -> Result<Option<Vec<u8>>, String> {
+    macos::cli()
+        .read(service, None)
+        .map(|value| value.map(|value| value.to_vec()))
+        .map_err(|_| "The macOS Keychain could not be read.".into())
 }
 
 #[cfg(target_os = "macos")]
 pub fn read_owned_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
-    read_generic_password(service, account)
+    macos::read_owned(service, account)
 }
 
+/// Replaces the data of another tool's item without touching its access list or
+/// partition list, the same way those tools update it themselves.
 #[cfg(target_os = "macos")]
 pub fn write_generic_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(service, account, value)
-        .map_err(|_| "The macOS Keychain could not be updated.".into())
+    use super::security_cli::{WriteError, WriteMode};
+
+    match macos::cli().write(service, account, value, WriteMode::UpdateExisting) {
+        Ok(()) => Ok(()),
+        Err(WriteError::TooLong) => {
+            // Moving the value into the argument list would expose it in `ps`. Fall back
+            // to the in-process update earlier builds used; it leaves the access list
+            // alone but may ask for the Keychain password once per build.
+            crate::app_info!(
+                "keychain",
+                "value too long for /usr/bin/security; updating in-process"
+            );
+            security_framework::passwords::set_generic_password(service, account, value)
+                .map_err(|_| "The macOS Keychain could not be updated.".into())
+        }
+        Err(error) => {
+            crate::app_warn!("keychain", "generic password update failed: {error:?}");
+            Err("The macOS Keychain could not be updated.".into())
+        }
+    }
 }
 
+/// Moves OpenQuota's own items created in-process by earlier builds to items created
+/// through `/usr/bin/security`. Items that are already current are left alone.
 #[cfg(target_os = "macos")]
-pub fn delete_generic_password(service: &str, account: &str) -> Result<(), String> {
-    use security_framework::passwords::delete_generic_password as delete_password;
+pub fn migrate_owned_passwords(service: &str, accounts: &[&str]) {
+    for account in accounts {
+        macos::with_owned_item(service, account, |_| ());
+    }
+}
 
-    match delete_password(service, account) {
-        Ok(()) => Ok(()),
-        Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => Ok(()),
-        Err(_) => Err("The macOS Keychain item could not be removed.".into()),
+#[cfg(not(target_os = "macos"))]
+pub fn migrate_owned_passwords(_service: &str, _accounts: &[&str]) {}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+    };
+
+    use super::super::security_cli::{
+        migrate_owned_item, LegacyKeychain, MigrationOutcome, ProcessRunner, Secret, SecurityCli,
+        WriteMode,
+    };
+
+    const MACOS_ITEM_NOT_FOUND: i32 = super::MACOS_ITEM_NOT_FOUND;
+
+    pub(super) fn cli() -> &'static SecurityCli<ProcessRunner> {
+        static CLI: OnceLock<SecurityCli<ProcessRunner>> = OnceLock::new();
+        CLI.get_or_init(SecurityCli::system)
+    }
+
+    /// Where one of OpenQuota's own items lives after this process looked at it.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(super) enum OwnedItem {
+        /// Missing, or created through `/usr/bin/security`.
+        Current,
+        /// Created in-process by an earlier build and not migrated yet.
+        Legacy,
+    }
+
+    /// Runs `action` while holding the lock that serialises access to OpenQuota's own
+    /// items, migrating the item first if this process has not looked at it yet.
+    pub(super) fn with_owned_item<T>(
+        service: &str,
+        account: &str,
+        action: impl FnOnce(&mut OwnedItem) -> T,
+    ) -> T {
+        static STATES: OnceLock<Mutex<HashMap<(String, String), OwnedItem>>> = OnceLock::new();
+        let mut states = STATES
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let state = states
+            .entry((service.to_owned(), account.to_owned()))
+            .or_insert_with(|| migrate(service, account));
+        action(state)
+    }
+
+    fn migrate(service: &str, account: &str) -> OwnedItem {
+        match migrate_owned_item(cli(), &InProcessKeychain, service, account) {
+            MigrationOutcome::Missing | MigrationOutcome::AlreadyCurrent => OwnedItem::Current,
+            MigrationOutcome::Migrated => {
+                crate::app_info!(
+                    "keychain",
+                    "moved saved {account} key to an item /usr/bin/security manages"
+                );
+                OwnedItem::Current
+            }
+            MigrationOutcome::KeptLegacy(reason) => {
+                crate::app_warn!(
+                    "keychain",
+                    "saved {account} key left in place; migration failed: {reason}"
+                );
+                OwnedItem::Legacy
+            }
+            MigrationOutcome::Lost(reason) => {
+                crate::app_error!(
+                    "keychain",
+                    "saved {account} key was removed during migration: {reason}"
+                );
+                OwnedItem::Current
+            }
+        }
+    }
+
+    pub(super) fn read_owned(service: &str, account: &str) -> Result<Option<Vec<u8>>, String> {
+        with_owned_item(service, account, |state| {
+            let value = match state {
+                OwnedItem::Current => cli()
+                    .read(service, Some(account))
+                    .map_err(|error| error.to_string()),
+                OwnedItem::Legacy => InProcessKeychain.read(service, account),
+            };
+            value
+                .map(|value| value.map(|value| value.to_vec()))
+                .map_err(|_| "The macOS Keychain could not be read.".into())
+        })
+    }
+
+    pub(super) fn write_owned(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+        with_owned_item(service, account, |state| {
+            if *state == OwnedItem::Legacy {
+                InProcessKeychain.delete(service, account)?;
+                if cli()
+                    .write(service, account, value, WriteMode::CreateOwned)
+                    .is_err()
+                {
+                    return InProcessKeychain.write(service, account, value);
+                }
+                *state = OwnedItem::Current;
+                return Ok(());
+            }
+            cli()
+                .write_owned(service, account, value)
+                .map_err(|_| "The macOS Keychain could not be updated.".into())
+        })
+    }
+
+    pub(super) fn delete_owned(service: &str, account: &str) -> Result<(), String> {
+        with_owned_item(service, account, |state| {
+            match state {
+                OwnedItem::Current => cli()
+                    .delete(service, account)
+                    .map_err(|_| "The macOS Keychain item could not be removed.".to_owned()),
+                OwnedItem::Legacy => InProcessKeychain.delete(service, account),
+            }?;
+            *state = OwnedItem::Current;
+            Ok(())
+        })
+    }
+
+    /// The in-process Keychain API that builds before the switch used for their own
+    /// items. Only migration and its fallbacks use it.
+    struct InProcessKeychain;
+
+    impl LegacyKeychain for InProcessKeychain {
+        fn read(&self, service: &str, account: &str) -> Result<Option<Secret>, String> {
+            use security_framework::passwords::{generic_password, PasswordOptions};
+
+            match generic_password(PasswordOptions::new_generic_password(service, account)) {
+                Ok(value) => Ok(Some(Secret::new(value))),
+                Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => Ok(None),
+                Err(_) => Err("The macOS Keychain could not be read.".into()),
+            }
+        }
+
+        fn write(&self, service: &str, account: &str, value: &[u8]) -> Result<(), String> {
+            security_framework::passwords::set_generic_password(service, account, value)
+                .map_err(|_| "The macOS Keychain could not be updated.".into())
+        }
+
+        fn delete(&self, service: &str, account: &str) -> Result<(), String> {
+            use security_framework::passwords::delete_generic_password;
+
+            match delete_generic_password(service, account) {
+                Ok(()) => Ok(()),
+                Err(error) if error.code() == MACOS_ITEM_NOT_FOUND => Ok(()),
+                Err(_) => Err("The macOS Keychain item could not be removed.".into()),
+            }
+        }
     }
 }
 
@@ -172,7 +355,7 @@ pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Resul
 
 #[cfg(target_os = "macos")]
 pub fn write_owned_password(service: &str, account: &str, value: &[u8]) -> Result<(), String> {
-    write_generic_password(service, account, value)
+    macos::write_owned(service, account, value)
 }
 
 #[cfg(target_os = "windows")]
@@ -200,7 +383,7 @@ pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String>
 
 #[cfg(target_os = "macos")]
 pub fn delete_owned_password(service: &str, account: &str) -> Result<(), String> {
-    delete_generic_password(service, account)
+    macos::delete_owned(service, account)
 }
 
 #[cfg(target_os = "linux")]

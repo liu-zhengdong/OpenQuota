@@ -525,6 +525,9 @@ pub fn run() {
                 notifications.clone(),
                 credential_detection_plan,
             );
+            let _ = std::thread::Builder::new()
+                .name("keychain-migration".into())
+                .spawn(providers::api_key::migrate_saved_keys);
             refresh_loop::spawn(app.handle().clone(), service, settings, notifications);
             app_info!("lifecycle", "OpenQuota startup completed");
 

@@ -3,9 +3,20 @@ use std::{fs, path::PathBuf, sync::Arc};
 use crate::models::ApiKeyStatus;
 use zeroize::Zeroizing;
 
-use super::credential_store::{delete_owned_password, read_owned_password, write_owned_password};
+use super::credential_store::{
+    delete_owned_password, migrate_owned_passwords, read_owned_password, write_owned_password,
+};
 
 const SERVICE: &str = "io.github.deviffyy.openquota.api-key";
+/// Providers whose API key OpenQuota can save; each is the account of its item.
+const SAVED_KEY_ACCOUNTS: &[&str] = &["kimi", "minimax", "openrouter", "zai"];
+
+/// Moves saved API keys written by earlier builds to the current storage format.
+/// Reads migrate lazily too; running this at startup gets the one-time Keychain
+/// prompt for the old items out of the way before the first refresh.
+pub fn migrate_saved_keys() {
+    migrate_owned_passwords(SERVICE, SAVED_KEY_ACCOUNTS);
+}
 
 pub struct SecretBytes(Zeroizing<Vec<u8>>);
 
