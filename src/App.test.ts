@@ -1397,6 +1397,50 @@ describe('OpenQuota dashboard', () => {
     expect(menu).not.toHaveAttribute('open');
   });
 
+  it('opens on the scroll area while keeping reorder grips first in keyboard order', async () => {
+    let emitMainWindowHidden: (() => void) | undefined;
+    mocks.listen.mockImplementation(
+      (eventName: string, handler: (event: { payload: unknown }) => void) => {
+        if (eventName === 'main-window-hidden') {
+          emitMainWindowHidden = () => handler({ payload: undefined });
+        }
+        return Promise.resolve(vi.fn());
+      },
+    );
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    render(App);
+    await screen.findByText('Plus');
+    const content = document.querySelector<HTMLElement>('.content')!;
+    const grip = document.querySelector<HTMLElement>('.drag-grip')!;
+    expect(content).toHaveAttribute('tabindex', '-1');
+
+    // A grip focused before hiding must not keep its ring for the next opening.
+    grip.focus();
+    await waitFor(() => expect(emitMainWindowHidden).toBeTypeOf('function'));
+    emitMainWindowHidden!();
+    expect(document.activeElement).toBe(content);
+
+    // WebKit may focus the first focusable element as the shown window becomes key.
+    grip.focus();
+    await fireEvent.focus(window);
+    expect(document.activeElement).toBe(content);
+    grip.focus();
+    await nextFrame();
+    expect(document.activeElement).toBe(content);
+    expect(document.activeElement).not.toBe(grip);
+
+    // Tab from the scroll area reaches the first grip, and later focus changes are left alone.
+    const firstTabStop = [
+      ...content.querySelectorAll<HTMLElement>('[tabindex], button, summary, a[href]'),
+    ].find((element) => element.tabIndex >= 0 && !element.hasAttribute('disabled'));
+    expect(firstTabStop).toBe(grip);
+    grip.focus();
+    await fireEvent.focus(window);
+    await nextFrame();
+    expect(document.activeElement).toBe(grip);
+  });
+
   it('resets native Options and Share details when the popup is hidden', async () => {
     let emitMainWindowHidden: (() => void) | undefined;
     mocks.listen.mockImplementation(

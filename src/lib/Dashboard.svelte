@@ -821,20 +821,15 @@
       animation: spin 900ms linear infinite;
     }
 
+    /* Size the box to the 13px icon so focus rings and hit areas surround the visible dots; the
+       negative margin keeps the title where the narrower grip used to put it. */
     .drag-grip {
       display: grid;
-      width: 8px;
-      grid-template-columns: repeat(2, 2px);
-      grid-template-rows: repeat(3, 2px);
-      gap: 2px;
+      width: 13px;
+      height: 13px;
+      margin-right: -6px;
+      place-items: center;
       opacity: 0.6;
-    }
-
-    .drag-grip i {
-      width: 2px;
-      height: 2px;
-      border-radius: 50%;
-      background: var(--tertiary);
     }
 
     .provider-card {
@@ -1185,16 +1180,7 @@
     }
 
     .drag-grip {
-      width: 7px;
-      grid-template-columns: repeat(2, 1.75px);
-      grid-template-rows: repeat(3, 1.75px);
-      gap: 2px;
       opacity: 1;
-    }
-
-    .drag-grip i {
-      width: 1.75px;
-      height: 1.75px;
     }
 
     .provider-card {
@@ -1251,6 +1237,10 @@
 
     .metric-context-target:hover > .metric-reorder-handle {
       opacity: 0.82;
+    }
+
+    .metric-reorder-handle:focus-visible {
+      opacity: 1;
     }
 
     .context-menu {

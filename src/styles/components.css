@@ -131,13 +131,19 @@
     letter-spacing: 0;
   }
 
+  /* Grips sit on the edge of clipped scroll areas, so the ring must not extend past their box. */
   .drag-grip:focus-visible,
   .reorder-grip:focus-visible,
   .metric-reorder-handle:focus-visible {
-    border-radius: 6px;
+    border-radius: 4px;
     outline: 2px solid color-mix(in srgb, var(--meter-fill) 72%, transparent);
-    outline-offset: 2px;
+    outline-offset: -1px;
     opacity: 1;
+  }
+
+  .metric-reorder-handle:focus-visible {
+    border-radius: 8px;
+    outline-offset: -2px;
   }
 
   .reorder-source {
