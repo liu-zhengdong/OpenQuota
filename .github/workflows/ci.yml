@@ -137,11 +137,31 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm build:linux
 
+      # Pull requests from forks get no secrets, so they keep the ad-hoc signature.
+      - name: Configure self-signed macOS signing
+        if: runner.os == 'macOS' && vars.ENABLE_MACOS_SELF_SIGNING == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        env:
+          MACOS_SELFSIGN_CERTIFICATE: ${{ secrets.MACOS_SELFSIGN_CERTIFICATE }}
+          MACOS_SELFSIGN_PASSWORD: ${{ secrets.MACOS_SELFSIGN_PASSWORD }}
+        run: .github/scripts/setup-macos-selfsign.sh
+
+      - name: Configure ad-hoc macOS signing
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY == ''
+        shell: bash
+        run: echo 'APPLE_SIGNING_IDENTITY=-' >> "$GITHUB_ENV"
+
       - name: Build macOS DMG
         if: runner.os == 'macOS'
         run: pnpm tauri build --bundles dmg
-        env:
-          APPLE_SIGNING_IDENTITY: '-'
+
+      - name: Show macOS designated requirement
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)"
+          codesign -d -r- "$app" 2>&1 | tail -1
+          codesign --verify --deep --strict "$app"
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
