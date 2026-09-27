@@ -1361,6 +1361,10 @@ describe('OpenQuota dashboard', () => {
     const provider = await screen.findByRole('group', { name: 'Codex provider' });
     const card = within(provider).getByRole('region', { name: 'Codex usage' });
     expect(screen.getByText('Next update in 1m')).toBeInTheDocument();
+    // The footer button holds only the version and the next-update label, no stray markup text.
+    expect(
+      screen.getByRole('button', { name: 'Refresh all provider usage' }).textContent?.trim(),
+    ).toMatch(/^OpenQuota \S+Next update in 1m$/);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh all provider usage' }));
     await waitFor(() =>
       expect(within(provider).queryByLabelText('Refreshing')).not.toBeInTheDocument(),

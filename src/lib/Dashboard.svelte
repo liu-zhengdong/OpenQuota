@@ -461,7 +461,6 @@
             >{t('dashboard.outdated')}<span class="sr-only"
               >. {stalenessTooltip(snapshot.refreshedAt)}</span
             ></span
-          >
           >{/if}
         <span
           class="provider-status-slot"
@@ -513,7 +512,6 @@
                   onclick={() => onOpenProviderCustomize(provider.id)}
                   >{t('common.configure')}</button
                 >
-                >
               {/if}
               <button
                 type="button"
@@ -523,7 +521,6 @@
                 aria-disabled={state.refreshing}
                 onclick={(event) => void retryProvider(event, provider.id, state.refreshing)}
                 >{state.refreshing ? t('common.retrying') : t('common.retry')}</button
-              >
               >
             </span>
           </div>
@@ -660,28 +657,23 @@
           name: providerDisplayName(menuProvider.id),
         })}</button
       >
-      >
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(menuProvider.id)}
         ><Icon name="refresh" size={15} />{t('dashboard.refreshProvider', {
           name: providerDisplayName(menuProvider.id),
         })}</button
       >
-      >
       {#if canRenameProvider(menuProvider.id, renamableProviderIds)}
         <button type="button" role="menuitem" onclick={() => onRenameProvider(menuProvider.id)}
           ><Icon name="edit" size={15} />{t('dashboard.rename')}</button
-        >
         >
       {/if}
       <button type="button" role="menuitem" onclick={() => onOpenProviderCustomize(menuProvider.id)}
         ><Icon name="sliders" size={15} />{t('dashboard.customize')}</button
       >
-      >
       <hr />
       <button type="button" role="menuitem" onclick={() => onShare(menuProvider.id)}
         ><Icon name="share" size={15} />{t('dashboard.shareScreenshot')}</button
-      >
       >
     </div>
   {/if}
@@ -707,7 +699,6 @@
         onclick={() => patchMetric(metricProvider.id, menuMetric.id, { enabled: false })}
         ><Icon name="power" size={15} />{t('common.hide')}</button
       >
-      >
       {#if metricDefinition(menuMetric.id)?.pinnable}
         <button
           type="button"
@@ -722,7 +713,6 @@
             ? t('dashboard.unstar')
             : t('dashboard.starForMenuBar')}</button
         >
-        >
       {/if}
       <hr />
       <button type="button" role="menuitem" onclick={() => onRefresh(metricProvider.id)}
@@ -730,13 +720,11 @@
           name: providerDisplayName(metricProvider.id),
         })}</button
       >
-      >
       <button
         type="button"
         role="menuitem"
         onclick={() => onOpenProviderCustomize(metricProvider.id)}
         ><Icon name="sliders" size={15} />{t('dashboard.customize')}</button
-      >
       >
     </div>
   {/if}
