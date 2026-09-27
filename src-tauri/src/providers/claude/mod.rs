@@ -3,6 +3,9 @@ pub mod auth;
 mod client;
 mod mapper;
 
+/// Catalog identifier the interface resolves against `notices.claude.rateLimited`.
+const RATE_LIMIT_NOTICE_ID: &str = "claude.rateLimited";
+
 use std::sync::{Arc, Mutex};
 
 use chrono::{Duration, Utc};
@@ -11,9 +14,10 @@ use thiserror::Error;
 
 use crate::{
     models::{
-        MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderNotice,
-        ProviderNoticeTone, ProviderSnapshot,
+        MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderMessage,
+        ProviderNotice, ProviderNoticeTone, ProviderSnapshot,
     },
+    providers::CacheIdentity,
     storage::Storage,
 };
 
@@ -153,6 +157,9 @@ pub struct ClaudeProvider {
     cached_credential_fingerprint: Mutex<Option<[u8; 32]>>,
     last_good: Mutex<Option<ProviderSnapshot>>,
     rate_limited_until: Mutex<Option<chrono::DateTime<Utc>>>,
+    /// Lets a cold start inside a rate limit window show the numbers the last run read
+    /// instead of an empty card. `None` only in tests that never build a `Storage`.
+    storage: Option<Arc<Storage>>,
 }
 
 struct ClaudeRuntimeConfig {
@@ -169,8 +176,11 @@ pub(crate) fn runtimes(
     Ok(runtime_configs(discovery)
         .into_iter()
         .map(|config| {
-            Arc::new(ClaudeProvider::new_scoped(config, client.clone()))
-                as Arc<dyn crate::providers::UsageProvider>
+            Arc::new(ClaudeProvider::new_scoped(
+                config,
+                client.clone(),
+                Some(storage.clone()),
+            )) as Arc<dyn crate::providers::UsageProvider>
         })
         .collect())
 }
@@ -208,19 +218,24 @@ fn runtime_configs(discovery: accounts::ClaudeAccountDiscovery) -> Vec<ClaudeRun
 
 impl ClaudeProvider {
     #[cfg(test)]
-    fn new() -> Result<Self, ClaudeError> {
-        Ok(Self::new_scoped(
+    fn new() -> Self {
+        Self::new_scoped(
             ClaudeRuntimeConfig {
                 definition: definition(),
                 credential_scope: ClaudeCredentialScope::Standard,
                 account_identity: None,
             },
-            ClaudeClient::new()?,
-        ))
+            ClaudeClient::new().expect("test client"),
+            None,
+        )
     }
 
-    fn new_scoped(config: ClaudeRuntimeConfig, client: ClaudeClient) -> Self {
-        Self {
+    fn new_scoped(
+        config: ClaudeRuntimeConfig,
+        client: ClaudeClient,
+        storage: Option<Arc<Storage>>,
+    ) -> Self {
+        let provider = Self {
             definition: config.definition,
             credential_scope: config.credential_scope,
             account_identity: config.account_identity,
@@ -228,6 +243,43 @@ impl ClaudeProvider {
             cached_credential_fingerprint: Mutex::new(None),
             last_good: Mutex::new(None),
             rate_limited_until: Mutex::new(None),
+            storage,
+        };
+        provider.restore_last_good();
+        provider
+    }
+
+    /// Seeds the in-memory fallback from the last snapshot this account left on disk.
+    ///
+    /// The service already persists every successful snapshot, so a restart during a
+    /// rate limit window can reuse it. Provider-authored notices and warnings are
+    /// dropped: the window this snapshot is replayed into decides those again.
+    fn restore_last_good(&self) {
+        let Some(storage) = self.storage.as_ref() else {
+            return;
+        };
+        // Mirrors `cache_identity` so the row found here is the row a refresh would write.
+        let identity = match self.account_identity.as_deref() {
+            Some(identity) => CacheIdentity::Resolved(identity),
+            None => CacheIdentity::Unresolved,
+        };
+        match storage.load_snapshot_for_identity(self.provider_id(), identity) {
+            Ok(Some(snapshot)) => {
+                crate::app_debug!(
+                    "cache",
+                    "reusing the last successful Claude limits from disk for {}",
+                    self.provider_id()
+                );
+                if let Ok(mut last) = self.last_good.lock() {
+                    *last = Some(remembered_snapshot(snapshot));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => crate::app_warn!(
+                "cache",
+                "last successful Claude limits could not be read for {}: {error}",
+                self.provider_id()
+            ),
         }
     }
 
@@ -330,13 +382,14 @@ impl ClaudeProvider {
 
                 warnings,
                 refreshed_at: now,
+                remembered: false,
             });
         }
         if !credential.has_profile_scope() {
-            warnings.push(
-                "Re-login for live usage. Run `claude` and sign in again to restore subscription limits."
-                    .into(),
-            );
+            warnings.push(ProviderMessage::new(
+                "claude.reLoginRequired",
+                "Re-login for live usage. Run `claude` and sign in again to restore subscription limits.",
+            ));
             return Ok(ProviderSnapshot {
                 provider_id: self.provider_id().into(),
                 plan: plan_name(credential),
@@ -347,6 +400,7 @@ impl ClaudeProvider {
 
                 warnings,
                 refreshed_at: now,
+                remembered: false,
             });
         }
         self.activate_live_usage_cache(credential.fingerprint());
@@ -372,29 +426,7 @@ impl ClaudeProvider {
             .filter(|until| now < *until);
         if let Some(until) = cooldown_until {
             let retry = until.signed_duration_since(now).num_seconds().max(0) as u64;
-            if let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) {
-                snapshot.warnings.push(
-                    "Claude live usage is rate limited; showing the last successful limits.".into(),
-                );
-                snapshot.notices = vec![rate_limit_notice(retry, true)];
-                snapshot.refreshed_at = now;
-                return Ok(snapshot);
-            }
-            warnings.push(format!(
-                "Claude live usage is rate limited; retrying in about {}.",
-                retry_minutes(retry)
-            ));
-            return Ok(ProviderSnapshot {
-                provider_id: self.provider_id().into(),
-                plan: plan_name(credential),
-                quotas: Vec::new(),
-                value_metrics: Vec::new(),
-                status_metrics: Vec::new(),
-                notices: vec![rate_limit_notice(retry, false)],
-
-                warnings,
-                refreshed_at: now,
-            });
+            return Ok(self.rate_limited_snapshot(plan_name(credential), retry, warnings));
         }
 
         let token = credential.access_token().ok_or(ClaudeError::NotLoggedIn)?;
@@ -422,32 +454,56 @@ impl ClaudeProvider {
             if let Ok(mut until) = self.rate_limited_until.lock() {
                 *until = Some(now + Duration::seconds(retry as i64));
             }
-            if let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) {
-                snapshot.warnings.push(format!(
-                    "Claude live usage is rate limited; retrying in about {}.",
-                    retry_minutes(retry)
-                ));
-                snapshot.notices = vec![rate_limit_notice(retry, true)];
-                snapshot.refreshed_at = now;
-                return Ok(snapshot);
-            }
-            warnings.push(format!(
-                "Claude live usage is rate limited; retrying in about {}.",
-                retry_minutes(retry)
-            ));
-            return Ok(ProviderSnapshot {
+            return Ok(self.rate_limited_snapshot(plan_name(credential), retry, warnings));
+        }
+        self.build_snapshot(status, &body, credential, warnings, now)
+    }
+
+    /// The snapshot shown while the usage endpoint is refusing requests.
+    ///
+    /// Replays the last successful limits when they are known, keeping their original
+    /// `refreshed_at` so the interface can say how old the numbers are. Either way the
+    /// result is marked `remembered`: nothing was read from the provider, so it must never
+    /// replace the limits already on disk.
+    fn rate_limited_snapshot(
+        &self,
+        plan: Option<String>,
+        retry: u64,
+        warnings: Vec<ProviderMessage>,
+    ) -> ProviderSnapshot {
+        let Some(mut snapshot) = self.last_good.lock().ok().and_then(|value| value.clone()) else {
+            let mut warnings = warnings;
+            warnings.push(
+                ProviderMessage::new(
+                    "claude.rateLimitedRetry",
+                    format!(
+                        "Claude live usage is rate limited; retrying in about {}.",
+                        retry_minutes(retry)
+                    ),
+                )
+                .with_param("retrySeconds", retry.to_string()),
+            );
+            return ProviderSnapshot {
                 provider_id: self.provider_id().into(),
-                plan: plan_name(credential),
+                plan,
                 quotas: Vec::new(),
                 value_metrics: Vec::new(),
                 status_metrics: Vec::new(),
-                notices: vec![rate_limit_notice(retry, false)],
-
+                notices: vec![rate_limit_notice(retry, false, Utc::now())],
                 warnings,
-                refreshed_at: now,
-            });
-        }
-        self.build_snapshot(status, &body, credential, warnings, now)
+                refreshed_at: Utc::now(),
+                remembered: true,
+            };
+        };
+        snapshot.remembered = true;
+        // Whatever the caller collected before the rate limit still applies to this card.
+        snapshot.warnings.splice(0..0, warnings);
+        snapshot.warnings.push(ProviderMessage::new(
+            "claude.rateLimitedStale",
+            "Claude live usage is rate limited; showing the last successful limits.",
+        ));
+        snapshot.notices = vec![rate_limit_notice(retry, true, snapshot.refreshed_at)];
+        snapshot
     }
 
     fn build_snapshot(
@@ -455,7 +511,7 @@ impl ClaudeProvider {
         status: StatusCode,
         body: &serde_json::Value,
         credential: &ClaudeCredential,
-        warnings: Vec<String>,
+        warnings: Vec<ProviderMessage>,
         now: chrono::DateTime<Utc>,
     ) -> Result<ProviderSnapshot, ClaudeError> {
         let mapped = map_usage(status, body, &credential.oauth)?;
@@ -469,6 +525,7 @@ impl ClaudeProvider {
 
             warnings,
             refreshed_at: now,
+            remembered: false,
         };
         if let Ok(mut last) = self.last_good.lock() {
             *last = Some(snapshot.clone());
@@ -479,20 +536,25 @@ impl ClaudeProvider {
         Ok(snapshot)
     }
 
+    /// Points the live usage cache at `fingerprint`, dropping the remembered limits when the
+    /// credential behind them changed.
+    ///
+    /// The first activation of a process only adopts: there is no earlier fingerprint to have
+    /// swapped from, and `restore_last_good` already keyed what it loaded on the account
+    /// identity resolved at startup.
     fn activate_live_usage_cache(&self, fingerprint: [u8; 32]) {
-        let changed = self
+        let previous = self
             .cached_credential_fingerprint
             .lock()
-            .map(|mut active| {
-                if active.as_ref() == Some(&fingerprint) {
-                    false
-                } else {
-                    *active = Some(fingerprint);
-                    true
-                }
-            })
-            .unwrap_or(true);
-        if !changed {
+            .ok()
+            .and_then(|active| *active);
+        if previous == Some(fingerprint) {
+            return;
+        }
+        if let Ok(mut active) = self.cached_credential_fingerprint.lock() {
+            *active = Some(fingerprint);
+        }
+        if previous.is_none() {
             return;
         }
         if let Ok(mut last) = self.last_good.lock() {
@@ -512,22 +574,55 @@ impl ClaudeProvider {
     }
 }
 
-fn rate_limit_notice(retry_seconds: u64, showing_stale_limits: bool) -> ProviderNotice {
-    let retry = if retry_seconds == 0 {
-        "Ready to retry".to_owned()
-    } else {
-        format!("Retrying in about {}", retry_minutes(retry_seconds))
+/// Builds the `claude.rateLimited` notice.
+///
+/// `variant` names the catalog entry holding the message, so the interface picks the copy for
+/// its own language. `remembered_at` is the moment the replayed limits were actually read, so
+/// the panel can label the numbers instead of implying the retry window refreshed them.
+fn rate_limit_notice(
+    retry_seconds: u64,
+    showing_remembered_limits: bool,
+    remembered_at: chrono::DateTime<Utc>,
+) -> ProviderNotice {
+    let variant = match (showing_remembered_limits, retry_seconds) {
+        (_, 0) => "ready",
+        (true, _) => "rememberedRetry",
+        (false, _) => "retry",
     };
-    ProviderNotice {
-        id: "rateLimited".into(),
-        title: "Live usage paused".into(),
-        message: if showing_stale_limits {
-            format!("Showing the last successful limits · {retry}")
+    let mut notice = ProviderNotice::new(
+        RATE_LIMIT_NOTICE_ID,
+        "Live usage paused",
+        if showing_remembered_limits {
+            format!(
+                "Showing the last successful limits · {}",
+                retry_phrase(retry_seconds)
+            )
         } else {
-            retry
+            retry_phrase(retry_seconds)
         },
-        tone: ProviderNoticeTone::Warning,
+        ProviderNoticeTone::Warning,
+    )
+    .with_param("variant", variant)
+    .with_param("retrySeconds", retry_seconds.to_string());
+    if showing_remembered_limits {
+        notice = notice.with_param("rememberedAt", remembered_at.to_rfc3339());
     }
+    notice
+}
+
+fn retry_phrase(retry_seconds: u64) -> String {
+    if retry_seconds == 0 {
+        return "Ready to retry".to_owned();
+    }
+    format!("Retrying in about {}", retry_minutes(retry_seconds))
+}
+
+/// Strips provider-authored presentation from a snapshot replayed as remembered data.
+fn remembered_snapshot(mut snapshot: ProviderSnapshot) -> ProviderSnapshot {
+    snapshot.notices = Vec::new();
+    snapshot.warnings = Vec::new();
+    snapshot.remembered = true;
+    snapshot
 }
 
 fn retry_minutes(retry_seconds: u64) -> String {
@@ -543,7 +638,7 @@ fn refresh_credential(
     credential: &mut ClaudeCredential,
     config: &auth::ClaudeOAuthConfig,
     now: chrono::DateTime<Utc>,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ProviderMessage>,
     credential_generation: &mut ClaudeCredentialGeneration,
     credential_scope: &ClaudeCredentialScope,
 ) -> Result<(), ClaudeError> {
@@ -574,10 +669,10 @@ fn refresh_credential(
                 "auth:claude",
                 "failed to persist rotated credentials; using them for this session only"
             );
-            warnings.push(
-                "The refreshed Claude login is active for this session but could not be saved."
-                    .into(),
-            );
+            warnings.push(ProviderMessage::new(
+                "claude.credentialNotSaved",
+                "The refreshed Claude login is active for this session but could not be saved.",
+            ));
         }
     }
     Ok(())
@@ -655,7 +750,11 @@ mod tests {
     use chrono::{Duration, Utc};
     use tempfile::tempdir;
 
-    use crate::models::{ProviderNoticeTone, ProviderSnapshot};
+    use crate::models::{
+        ProviderMessage, ProviderNotice, ProviderNoticeTone, ProviderSnapshot, QuotaFormat,
+        QuotaWindow,
+    };
+    use crate::storage::Storage;
 
     use super::{
         accounts::{self, ClaudeAccount, ClaudeAccountDiscovery},
@@ -681,6 +780,51 @@ mod tests {
             body.len()
         )
         .unwrap();
+    }
+
+    /// A snapshot shaped like a successful weekly read, optionally carrying the notice and
+    /// warning a previous rate limit window would have persisted.
+    fn remembered_limit_snapshot(
+        used_percent: f64,
+        refreshed_at: chrono::DateTime<Utc>,
+        with_rate_limit_presentation: bool,
+    ) -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider_id: "claude".into(),
+            plan: Some("Max".into()),
+            quotas: vec![QuotaWindow {
+                id: "claude.weekly".into(),
+                label: "Weekly".into(),
+                used_percent,
+                resets_at: None,
+                period_seconds: 604_800,
+                format: QuotaFormat::Percent,
+                used_value: None,
+                limit_value: None,
+                unit: None,
+                estimated: false,
+                source_note: None,
+            }],
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: with_rate_limit_presentation
+                .then(|| {
+                    ProviderNotice::new(
+                        "claude.rateLimited",
+                        "Live usage paused",
+                        "Ready to retry",
+                        ProviderNoticeTone::Warning,
+                    )
+                })
+                .into_iter()
+                .collect(),
+            warnings: with_rate_limit_presentation
+                .then(|| ProviderMessage::new("claude.rateLimitedStale", "previous window copy"))
+                .into_iter()
+                .collect(),
+            refreshed_at,
+            remembered: false,
+        }
     }
 
     #[test]
@@ -764,22 +908,196 @@ mod tests {
     }
 
     #[test]
-    fn rate_limit_notice_distinguishes_empty_and_stale_live_usage() {
-        let empty = rate_limit_notice(301, false);
+    fn rate_limit_notice_distinguishes_empty_and_remembered_live_usage() {
+        let read_at = Utc::now();
+
+        let empty = rate_limit_notice(301, false, read_at);
+        assert_eq!(empty.id, "claude.rateLimited");
         assert_eq!(empty.title, "Live usage paused");
         assert_eq!(empty.message, "Retrying in about 6 minutes");
         assert_eq!(empty.tone, ProviderNoticeTone::Warning);
-
-        let stale = rate_limit_notice(60, true);
         assert_eq!(
-            stale.message,
+            empty.params.get("retrySeconds").map(String::as_str),
+            Some("301")
+        );
+        assert_eq!(
+            empty.params.get("variant").map(String::as_str),
+            Some("retry")
+        );
+        assert!(!empty.params.contains_key("rememberedAt"));
+
+        let ready = rate_limit_notice(0, false, read_at);
+        assert_eq!(ready.message, "Ready to retry");
+        assert_eq!(
+            ready.params.get("variant").map(String::as_str),
+            Some("ready")
+        );
+
+        let remembered = rate_limit_notice(60, true, read_at);
+        assert_eq!(
+            remembered.message,
             "Showing the last successful limits · Retrying in about 1 minute"
+        );
+        assert_eq!(
+            remembered.params.get("variant").map(String::as_str),
+            Some("rememberedRetry")
+        );
+        assert_eq!(
+            remembered.params.get("rememberedAt").map(String::as_str),
+            Some(read_at.to_rfc3339().as_str())
         );
     }
 
     #[test]
+    fn rate_limited_snapshot_without_remembered_limits_carries_retry_only() {
+        let provider = ClaudeProvider::new();
+
+        let snapshot = provider.rate_limited_snapshot(Some("Max".into()), 300, Vec::new());
+
+        assert!(snapshot.quotas.is_empty());
+        assert!(snapshot.remembered);
+        assert_eq!(snapshot.notices[0].id, "claude.rateLimited");
+        assert_eq!(snapshot.notices[0].message, "Retrying in about 5 minutes");
+        assert_eq!(snapshot.warnings[0].id, "claude.rateLimitedRetry");
+        assert_eq!(
+            snapshot.warnings[0]
+                .params
+                .get("retrySeconds")
+                .map(String::as_str),
+            Some("300")
+        );
+    }
+
+    #[test]
+    fn rate_limited_snapshot_replays_remembered_limits_with_their_read_time() {
+        let provider = ClaudeProvider::new();
+        let read_at = Utc::now() - Duration::minutes(42);
+        *provider.last_good.lock().unwrap() = Some(remembered_limit_snapshot(31.0, read_at, false));
+
+        let snapshot = provider.rate_limited_snapshot(None, 42, Vec::new());
+
+        assert_eq!(snapshot.quotas[0].used_percent, 31.0);
+        assert!(snapshot.remembered);
+        // The numbers are only as fresh as the read they came from, so the card must not
+        // claim the retry window refreshed them.
+        assert_eq!(snapshot.refreshed_at, read_at);
+        assert_eq!(snapshot.warnings[0].id, "claude.rateLimitedStale");
+        assert_eq!(
+            snapshot.notices[0]
+                .params
+                .get("rememberedAt")
+                .map(String::as_str),
+            Some(read_at.to_rfc3339().as_str())
+        );
+    }
+
+    #[test]
+    fn a_rate_limited_refresh_reuses_the_limits_the_last_run_left_on_disk() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let read_at = Utc::now() - Duration::minutes(7);
+        let persisted = remembered_limit_snapshot(64.0, read_at, true);
+        storage.save_snapshot(&persisted).unwrap();
+
+        // A cold start: this process has read nothing itself, only what the last one saved.
+        let provider = ClaudeProvider::new_scoped(
+            ClaudeRuntimeConfig {
+                definition: definition(),
+                credential_scope: ClaudeCredentialScope::Standard,
+                account_identity: None,
+            },
+            ClaudeClient::new().unwrap(),
+            Some(Arc::clone(&storage)),
+        );
+        let restored = provider.last_good.lock().unwrap().clone().unwrap();
+        assert!(restored.remembered);
+        // A persisted rate limit window must not leak its own presentation into the next one.
+        assert!(restored.notices.is_empty());
+        assert!(restored.warnings.is_empty());
+        assert_eq!(restored.quotas[0].used_percent, 64.0);
+        assert_eq!(restored.refreshed_at, read_at);
+
+        let snapshot = provider.rate_limited_snapshot(None, 300, Vec::new());
+
+        assert_eq!(snapshot.quotas[0].used_percent, 64.0);
+        assert_eq!(snapshot.plan, persisted.plan);
+        // The numbers are only as fresh as the read they came from, so the card must not
+        // claim the retry window refreshed them.
+        assert_eq!(snapshot.refreshed_at, read_at);
+        assert!(snapshot.remembered);
+        assert_eq!(snapshot.notices[0].id, "claude.rateLimited");
+        assert_eq!(
+            snapshot.notices[0].message,
+            "Showing the last successful limits · Retrying in about 5 minutes"
+        );
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(snapshot.warnings[0].id, "claude.rateLimitedStale");
+    }
+
+    #[test]
+    fn the_first_live_usage_activation_keeps_the_limits_restored_from_disk() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let read_at = Utc::now() - Duration::minutes(7);
+        storage
+            .save_snapshot(&remembered_limit_snapshot(64.0, read_at, false))
+            .unwrap();
+
+        let provider = ClaudeProvider::new_scoped(
+            ClaudeRuntimeConfig {
+                definition: definition(),
+                credential_scope: ClaudeCredentialScope::Standard,
+                account_identity: None,
+            },
+            ClaudeClient::new().unwrap(),
+            Some(Arc::clone(&storage)),
+        );
+
+        // A refresh activates its credential before it checks the rate limit window, so an
+        // activation that dropped the restored limits would empty the very card this fixes.
+        provider.activate_live_usage_cache([7; 32]);
+        assert_eq!(
+            provider
+                .last_good
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|snapshot| snapshot.quotas[0].used_percent),
+            Some(64.0)
+        );
+
+        // A later credential swap still discards them, because they belong to the old login.
+        provider.activate_live_usage_cache([9; 32]);
+        assert!(provider.last_good.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_rate_limited_refresh_reports_no_data_when_nothing_was_ever_saved() {
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+
+        let provider = ClaudeProvider::new_scoped(
+            ClaudeRuntimeConfig {
+                definition: definition(),
+                credential_scope: ClaudeCredentialScope::Standard,
+                account_identity: None,
+            },
+            ClaudeClient::new().unwrap(),
+            Some(storage),
+        );
+        assert!(provider.last_good.lock().unwrap().is_none());
+
+        let snapshot = provider.rate_limited_snapshot(None, 300, Vec::new());
+
+        assert!(snapshot.quotas.is_empty());
+        assert!(snapshot.remembered);
+        assert_eq!(snapshot.notices[0].message, "Retrying in about 5 minutes");
+        assert_eq!(snapshot.warnings[0].id, "claude.rateLimitedRetry");
+    }
+
+    #[test]
     fn account_change_clears_live_usage_and_rate_limit_cache() {
-        let provider = ClaudeProvider::new().unwrap();
+        let provider = ClaudeProvider::new();
         let snapshot = ProviderSnapshot {
             provider_id: "claude".into(),
             plan: None,
@@ -789,6 +1107,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
 
         provider.activate_live_usage_cache([1; 32]);
@@ -853,6 +1172,7 @@ mod tests {
                 credential_scope,
             },
             ClaudeClient::new().unwrap(),
+            None,
         ));
         let config = ClaudeOAuthConfig {
             usage_url: format!("{base}/usage"),

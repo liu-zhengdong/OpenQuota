@@ -166,6 +166,7 @@ impl DevinProvider {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: (self.now)(),
+            remembered: false,
         })
     }
 }

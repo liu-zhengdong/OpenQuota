@@ -36,11 +36,29 @@ export interface StatusMetric {
 
 export type ResetClaimOutcome = 'success' | 'nothingToReset' | 'noCredit' | 'failed';
 
+/**
+ * Locale-independent values the provider filled in. The interface renders its own language
+ * from these plus the notice id, so the copy follows the language instead of the write time.
+ */
+export type ProviderMessageParams = Record<string, string>;
+
 export interface ProviderNotice {
+  /** Catalog id under `notices.`, namespaced by provider, e.g. `claude.rateLimited`. */
   id: string;
+  /** English copy used when the interface language has no catalog entry. */
   title: string;
+  /** English copy used when the interface language has no catalog entry. */
   message: string;
+  params?: ProviderMessageParams;
   tone: 'info' | 'warning';
+}
+
+export interface ProviderWarning {
+  /** Catalog id under `warnings.`, empty for text with no catalog entry. */
+  id: string;
+  params?: ProviderMessageParams;
+  /** English copy used when the interface language has no catalog entry. */
+  fallback: string;
 }
 
 export interface ProviderSnapshot {
@@ -50,8 +68,10 @@ export interface ProviderSnapshot {
   valueMetrics: ValueMetric[];
   statusMetrics: StatusMetric[];
   notices: ProviderNotice[];
-  warnings: string[];
+  warnings: ProviderWarning[];
   refreshedAt: string;
+  /** No live read produced these numbers, so they must not be presented as current. */
+  remembered?: boolean;
 }
 
 export type ProviderErrorKind =

@@ -13,7 +13,10 @@ use thiserror::Error;
 
 use crate::{
     hashing::sha256_hex,
-    models::{MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderSnapshot},
+    models::{
+        MetricDefinition, MetricSection, ProviderDefinition, ProviderLink, ProviderMessage,
+        ProviderSnapshot,
+    },
     storage::Storage,
 };
 
@@ -251,6 +254,7 @@ impl CodexProvider {
 
             warnings,
             refreshed_at: now,
+            remembered: false,
         })
     }
 
@@ -258,7 +262,7 @@ impl CodexProvider {
         &self,
         auth: &mut CodexAuthState,
         now: chrono::DateTime<Utc>,
-        warnings: &mut Vec<String>,
+        warnings: &mut Vec<ProviderMessage>,
     ) -> Result<(), CodexError> {
         let refresh_token = auth
             .refresh_token
@@ -279,10 +283,10 @@ impl CodexProvider {
                 "auth:codex",
                 "failed to persist rotated credentials; using them for this session only"
             );
-            warnings.push(
-                "The refreshed Codex login is active for this session but could not be saved."
-                    .into(),
-            );
+            warnings.push(ProviderMessage::new(
+                "codex.credentialNotSaved",
+                "The refreshed Codex login is active for this session but could not be saved.",
+            ));
         }
         Ok(())
     }

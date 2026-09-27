@@ -108,13 +108,111 @@ pub enum ProviderNoticeTone {
     Warning,
 }
 
+/// Locale-independent values a provider fills in so the interface can render its
+/// own language instead of receiving text frozen in the language active at write time.
+pub type ProviderMessageParams = BTreeMap<String, String>;
+
+/// A provider notice rendered as `notices.<id>.*` by the interface.
+///
+/// `title` and `message` stay in the payload as the English fallback for surfaces that
+/// carry no interface language, such as `openquota pace` and shared database caches.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderNotice {
+    /// Catalog identifier, namespaced by provider, e.g. `claude.rateLimited`.
     pub id: String,
     pub title: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "ProviderMessageParams::is_empty")]
+    pub params: ProviderMessageParams,
     pub tone: ProviderNoticeTone,
+}
+
+impl ProviderNotice {
+    pub fn new(
+        id: &str,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        tone: ProviderNoticeTone,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            message: message.into(),
+            params: ProviderMessageParams::new(),
+            tone,
+        }
+    }
+
+    pub fn with_param(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.params.insert(name.into(), value.into());
+        self
+    }
+}
+
+/// A provider warning rendered as `warnings.<id>` by the interface.
+///
+/// Warnings used to be bare strings, so cached snapshots written by earlier releases
+/// still deserialize: a string becomes a warning with no catalog id and keeps its text.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderMessage {
+    /// Catalog identifier, namespaced by provider, e.g. `claude.rateLimitedRetry`.
+    /// Empty for text a provider has no catalog entry for.
+    pub id: String,
+    #[serde(default, skip_serializing_if = "ProviderMessageParams::is_empty")]
+    pub params: ProviderMessageParams,
+    /// English text shown when the interface language has no catalog entry.
+    pub fallback: String,
+}
+
+impl ProviderMessage {
+    pub fn new(id: &str, fallback: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            params: ProviderMessageParams::new(),
+            fallback: fallback.into(),
+        }
+    }
+
+    pub fn with_param(mut self, name: &str, value: impl Into<String>) -> Self {
+        self.params.insert(name.into(), value.into());
+        self
+    }
+}
+
+impl<'de> Deserialize<'de> for ProviderMessage {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(String),
+            Current {
+                #[serde(default)]
+                id: String,
+                #[serde(default)]
+                params: ProviderMessageParams,
+                fallback: String,
+            },
+        }
+
+        Ok(match Repr::deserialize(deserializer)? {
+            Repr::Legacy(fallback) => Self {
+                id: String::new(),
+                params: ProviderMessageParams::new(),
+                fallback,
+            },
+            Repr::Current {
+                id,
+                params,
+                fallback,
+            } => Self {
+                id,
+                params,
+                fallback,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,8 +236,20 @@ pub struct ProviderSnapshot {
     pub status_metrics: Vec<StatusMetric>,
     #[serde(default)]
     pub notices: Vec<ProviderNotice>,
-    pub warnings: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_warnings")]
+    pub warnings: Vec<ProviderMessage>,
     pub refreshed_at: DateTime<Utc>,
+    /// No live read produced these numbers: they replay a remembered successful read, or
+    /// are absent because the provider could not be read. Either way the snapshot must
+    /// never replace better data on disk.
+    #[serde(default)]
+    pub remembered: bool,
+}
+
+fn deserialize_warnings<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ProviderMessage>, D::Error> {
+    Option::<Vec<ProviderMessage>>::deserialize(deserializer)?.map_or(Ok(Vec::new()), Ok)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -675,9 +785,68 @@ pub struct SettingsViewState {
 mod tests {
     use super::{
         ApiKeyMutationOutcome, ApiKeyStatus, AppSettings, LogLevel, ProviderApiKeyState,
-        ProviderErrorKind, ProviderLink, ProviderSnapshot, ProviderSort, ProviderViewState,
-        WindowMode,
+        ProviderErrorKind, ProviderLink, ProviderMessage, ProviderSnapshot, ProviderSort,
+        ProviderViewState, WindowMode,
     };
+
+    #[test]
+    fn cached_snapshots_written_before_warnings_gained_ids_still_load() {
+        let snapshot: ProviderSnapshot = serde_json::from_str(
+            r#"{
+                "providerId":"claude",
+                "plan":"Max",
+                "quotas":[],
+                "notices":[{
+                    "id":"rateLimited",
+                    "title":"Live usage paused",
+                    "message":"Retrying in about 5 minutes",
+                    "tone":"warning"
+                }],
+                "warnings":["Claude live usage is rate limited; retrying in about 5 minutes."],
+                "refreshedAt":"2026-09-27T00:00:00Z"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.warnings.len(), 1);
+        assert_eq!(snapshot.warnings[0].id, "");
+        assert_eq!(snapshot.warnings[0].params.len(), 0);
+        assert_eq!(
+            snapshot.warnings[0].fallback,
+            "Claude live usage is rate limited; retrying in about 5 minutes."
+        );
+        // Notices predate `params`, and `remembered` predates the field entirely.
+        assert!(snapshot.notices[0].params.is_empty());
+        assert!(!snapshot.remembered);
+    }
+
+    #[test]
+    fn structured_warnings_round_trip_with_their_ids_and_params() {
+        let snapshot = ProviderSnapshot {
+            provider_id: "claude".into(),
+            plan: None,
+            quotas: Vec::new(),
+            value_metrics: Vec::new(),
+            status_metrics: Vec::new(),
+            notices: Vec::new(),
+            warnings: vec![ProviderMessage::new(
+                "claude.rateLimitedRetry",
+                "Claude live usage is rate limited; retrying in about 5 minutes.",
+            )
+            .with_param("retrySeconds", "300")],
+            refreshed_at: chrono::Utc::now(),
+            remembered: true,
+        };
+
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["warnings"][0]["id"], "claude.rateLimitedRetry");
+        assert_eq!(json["warnings"][0]["params"]["retrySeconds"], "300");
+        assert_eq!(json["remembered"], true);
+        assert_eq!(
+            serde_json::from_value::<ProviderSnapshot>(json).unwrap(),
+            snapshot
+        );
+    }
 
     #[test]
     fn older_settings_default_new_update_state_fields() {

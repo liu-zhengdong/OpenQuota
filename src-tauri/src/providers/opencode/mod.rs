@@ -159,7 +159,7 @@ impl UsageProvider for OpenCodeProvider {
 fn snapshot(
     plan: Option<String>,
     quotas: Vec<crate::models::QuotaWindow>,
-    warnings: Vec<String>,
+    warnings: Vec<crate::models::ProviderMessage>,
     refreshed_at: DateTime<Utc>,
 ) -> ProviderSnapshot {
     ProviderSnapshot {
@@ -172,6 +172,7 @@ fn snapshot(
 
         warnings,
         refreshed_at,
+        remembered: false,
     }
 }
 

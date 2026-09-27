@@ -96,7 +96,9 @@ the latest cached provider snapshots, and exits.
 Each provider shows the window used for comparison (weekly when one exists, otherwise the longest
 percent window), used percent, elapsed percent of the period, spare percent (elapsed − used, so a
 positive value means usage is running behind an even pace), hours to reset, the short session
-window's used percent, and the snapshot age. Rows are sorted by spare, highest first.
+window's used percent, the snapshot age, and a `DATA` column reading `cached` or `stale`. Rows are
+sorted by spare, highest first. `stale` means the row is older than the staleness window the panel
+marks, so the numbers are the last successful read rather than a current one.
 
 `--json` prints a JSON array with camelCase fields and ISO 8601 UTC timestamps for scripts. Exit
 codes are `0` for a printed report, `1` when the database could not be read, `2` when it holds no

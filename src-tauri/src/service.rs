@@ -451,14 +451,18 @@ impl ProviderService {
                         .is_err()
                 })
             });
+        // Remembered snapshots only replay what an earlier run already read, so persisting one
+        // could replace a newer successful read with older numbers.
         let cache_error = !account_error
             && result.as_ref().ok().is_some_and(|refresh| {
-                self.storage
-                    .save_snapshot_for_identity(
-                        &refresh.snapshot,
-                        refresh.cache_identity.as_deref(),
-                    )
-                    .is_err()
+                !refresh.snapshot.remembered
+                    && self
+                        .storage
+                        .save_snapshot_for_identity(
+                            &refresh.snapshot,
+                            refresh.cache_identity.as_deref(),
+                        )
+                        .is_err()
             });
         if account_error {
             crate::app_warn!(
@@ -467,7 +471,11 @@ impl ProviderService {
             );
         } else if cache_error {
             crate::app_warn!("cache", "snapshot for {provider_id} could not be persisted");
-        } else if result.is_ok() {
+        } else if result
+            .as_ref()
+            .ok()
+            .is_some_and(|refresh| !refresh.snapshot.remembered)
+        {
             crate::app_debug!("cache", "snapshot for {provider_id} persisted");
         }
         let result = if account_error {
@@ -899,6 +907,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         }
     }
 
@@ -941,6 +950,7 @@ mod tests {
             notices: Vec::new(),
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
+            remembered: false,
         };
         let mut state = ProviderViewState {
             snapshot: Some(snapshot.clone()),
@@ -1697,6 +1707,70 @@ mod tests {
             .unwrap()
             .contains_key("recovering"));
     }
+    #[test]
+    fn remembered_snapshots_are_shown_but_never_replace_the_saved_limits() {
+        struct RememberedProvider {
+            id: &'static str,
+            live: bool,
+        }
+        impl UsageProvider for RememberedProvider {
+            fn definition(&self) -> ProviderDefinition {
+                test_definition(self.id)
+            }
+
+            fn has_local_credentials(&self) -> bool {
+                true
+            }
+
+            fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+                let mut snapshot = test_snapshot(self.id);
+                if self.live {
+                    snapshot.plan = Some("live-read".to_owned());
+                    return Ok(snapshot);
+                }
+                // What a rate limited provider hands back: an older read it replayed.
+                snapshot.plan = Some("remembered-read".to_owned());
+                snapshot.refreshed_at = Utc::now() - chrono::Duration::minutes(9);
+                snapshot.remembered = true;
+                Ok(snapshot)
+            }
+        }
+
+        let directory = tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let live = Arc::new(RememberedProvider {
+            id: "limited",
+            live: true,
+        }) as Arc<dyn UsageProvider>;
+        let registry = Arc::new(ProviderRegistry::new(vec![live]).unwrap());
+        let service = Arc::new(ProviderService::new(registry, Arc::clone(&storage)));
+
+        tauri::async_runtime::block_on(service.refresh("limited", true));
+        let saved = storage.load_snapshot("limited").unwrap().unwrap();
+        assert_eq!(saved.plan, Some("live-read".to_owned()));
+
+        // The same card now answers with a replayed read instead of a live one.
+        let replayed = RememberedProvider {
+            id: "limited",
+            live: false,
+        };
+        let registry = Arc::new(
+            ProviderRegistry::new(vec![Arc::new(replayed) as Arc<dyn UsageProvider>]).unwrap(),
+        );
+        let service = Arc::new(ProviderService::new(registry, Arc::clone(&storage)));
+        let state = tauri::async_runtime::block_on(service.refresh("limited", true));
+
+        assert!(state.error.is_none());
+        assert_eq!(
+            state.snapshot.and_then(|snapshot| snapshot.plan),
+            Some("remembered-read".to_owned())
+        );
+        assert_eq!(
+            storage.load_snapshot("limited").unwrap().unwrap().plan,
+            Some("live-read".to_owned())
+        );
+    }
+
     #[test]
     fn snapshot_contract_accepts_declared_scoped_models_and_rejects_other_sources() {
         let registry =

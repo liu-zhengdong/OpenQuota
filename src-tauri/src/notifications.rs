@@ -168,6 +168,7 @@ mod tests {
                 notices: Vec::new(),
                 warnings: Vec::new(),
                 refreshed_at: Utc::now(),
+                remembered: false,
             }),
             error: Some("The latest refresh failed.".into()),
             ..ProviderViewState::default()

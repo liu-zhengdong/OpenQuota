@@ -1,5 +1,6 @@
 import { t, windowLabel } from './i18n';
 import { metricLabel, usageWord } from './i18n/labels';
+import { noticeMessage, noticeTitle } from './i18n/providerMessages';
 import type { ProviderCatalogIndex } from './metrics';
 import { formatMetricValue } from './metricFormat';
 import { formatLimit, formatReset, projectPace } from './pacing';
@@ -72,7 +73,12 @@ export function buildProviderShareRows(
   let previousTextSection: ProviderLayout['metrics'][number]['section'] | null = null;
 
   for (const notice of snapshot.notices) {
-    rows.push({ kind: 'text', label: notice.title, value: notice.message, condensed: false });
+    rows.push({
+      kind: 'text',
+      label: noticeTitle(notice),
+      value: noticeMessage(notice),
+      condensed: false,
+    });
   }
 
   for (const metric of visible) {

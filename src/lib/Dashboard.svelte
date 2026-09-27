@@ -11,6 +11,7 @@
   import MetricRenderer from './MetricRenderer.svelte';
   import { t } from './i18n';
   import { metricLabel } from './i18n/labels';
+  import { warningTexts } from './i18n/providerMessages';
   import type { ProviderCatalogIndex } from './metrics';
   import { selectComparisonWindow, sparePercent } from './pacing';
   import { canRenameProvider } from './providerNames';
@@ -478,10 +479,10 @@
             <span
               class="provider-warning"
               role="status"
-              data-tooltip={snapshot.warnings.join('\n')}
-              aria-label={snapshot.warnings.join(' ')}
+              data-tooltip={warningTexts(snapshot.warnings).join('\n')}
+              aria-label={warningTexts(snapshot.warnings).join(' ')}
               ><Icon name="warning" size={12} strokeWidth={2} /><span class="sr-only"
-                >{snapshot.warnings.join(' ')}</span
+                >{warningTexts(snapshot.warnings).join(' ')}</span
               ></span
             >
           {/if}

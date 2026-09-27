@@ -194,6 +194,7 @@ impl OpenRouterProvider {
                 notices: Vec::new(),
                 warnings: Vec::new(),
                 refreshed_at: Utc::now(),
+                remembered: false,
             });
         }
         if credits.is_auth_failure() && key.is_auth_failure() {
