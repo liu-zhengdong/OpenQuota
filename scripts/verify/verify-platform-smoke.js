@@ -51,7 +51,8 @@ requireContracts('CI', ci, [
   'Build Linux packages',
   'uses: ./.github/actions/platform-smoke',
   'dbus-tests',
-  "APPLE_SIGNING_IDENTITY: '-'",
+  'run: .github/scripts/setup-macos-selfsign.sh',
+  'echo \'APPLE_SIGNING_IDENTITY=-\' >> "$GITHUB_ENV"',
 ]);
 
 requireContracts('release', release, [
@@ -79,6 +80,7 @@ requireContracts('release', release, [
   "if: runner.os == 'macOS' && needs.validate.outputs.macos_signing != 'true'",
   "if: runner.os == 'macOS' && needs.validate.outputs.macos_signing == 'true'",
   'echo \'APPLE_SIGNING_IDENTITY=-\' >> "$GITHUB_ENV"',
+  'run: .github/scripts/setup-macos-selfsign.sh',
   'name: Configure native macOS signing',
   'write_env APPLE_CERTIFICATE "$OPENQUOTA_APPLE_CERTIFICATE"',
   'write_env APPLE_CERTIFICATE_PASSWORD "$OPENQUOTA_APPLE_CERTIFICATE_PASSWORD"',
