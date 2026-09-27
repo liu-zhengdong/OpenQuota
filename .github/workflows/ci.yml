@@ -159,7 +159,14 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' | head -1)"
+          app="$(find src-tauri/target -path '*/bundle/*' -name '*.app' -maxdepth 6 -prune | head -1)"
+          if [[ -z "$app" ]]; then
+            dmg="$(find src-tauri/target -name '*.dmg' -maxdepth 6 | head -1)"
+            mount="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$dmg" >/dev/null
+            app="$(find "$mount" -maxdepth 1 -name '*.app' | head -1)"
+          fi
+          echo "Checking $app"
           codesign -d -r- "$app" 2>&1 | tail -1
           codesign --verify --deep --strict "$app"
 
