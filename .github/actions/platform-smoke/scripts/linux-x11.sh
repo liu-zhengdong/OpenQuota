@@ -40,6 +40,7 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
   wm_pid=""
   app_pid=""
   app_exit_detail=""
+  app_exit_status=""
   pending=""
 
   cleanup() {
@@ -84,6 +85,7 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
     local status=0
     wait "${app_pid}" 2>/dev/null || status=$?
     app_pid=""
+    app_exit_status="${status}"
     if test "${status}" -gt 128; then
       app_exit_detail="was terminated by signal $(kill -l "$((status - 128))" 2>/dev/null || echo "?") (exit status ${status})"
     else
@@ -207,7 +209,9 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
   app_pid=$!
   if test "${OPENQUOTA_SMOKE_TRAY_HOST}" = available; then
     wait_for 30 "tray-host startup" startup_with_tray
-    kill "${watcher_pid}"
+    if ! kill "${watcher_pid}" 2>/dev/null; then
+      fail "The StatusNotifier watcher exited on its own before the smoke test stopped it."
+    fi
     wait "${watcher_pid}" 2>/dev/null || true
     watcher_pid=""
     wait_for 30 "the standalone window after the tray host stopped" standalone_fallback
@@ -259,7 +263,7 @@ xvfb-run -a dbus-run-session -- bash -euo pipefail -c '
     sleep 0.25
   done
   reap_app
-  if test "${app_exit_detail}" != "exited with status 0"; then
+  if test "${app_exit_status}" -ne 0; then
     fail "OpenQuota ${app_exit_detail} after its standalone window was closed; expected status 0."
   fi
 '
