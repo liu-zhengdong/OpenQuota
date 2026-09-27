@@ -300,6 +300,43 @@ fn position_popup(window: &WebviewWindow) {
     }
 }
 
+/// Schedules window work on the main thread without waiting for it. Every window helper here ends
+/// in a GTK/GDK call (`current_monitor` through the tray positioning and the panel height, for
+/// example) and those are only safe on the thread that owns the event loop. The global-shortcut and
+/// single-instance callbacks arrive on their own threads — the hotkey listener thread on Linux and
+/// macOS, a D-Bus worker on Linux — and used to run that work on the calling thread.
+pub(crate) fn dispatch_to_main_thread<F>(app: &AppHandle, task: F)
+where
+    F: FnOnce(&AppHandle) + Send + 'static,
+{
+    let scheduled = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || task(&scheduled)) {
+        crate::app_warn!(
+            "window",
+            "main-thread window work could not be scheduled: {error}"
+        );
+    }
+}
+
+/// Awaiting counterpart of [`dispatch_to_main_thread`], for async commands: they run on the async
+/// runtime rather than on the main thread, so they must reach window work the same way. Never call
+/// it from the main thread itself — the task would only run once the event loop is free again,
+/// which cannot happen while this call is waiting for it.
+pub(crate) async fn await_on_main_thread<T, F>(app: &AppHandle, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(task());
+    })
+    .map_err(|_| "OpenQuota window could not be updated.".to_owned())?;
+    receiver
+        .await
+        .map_err(|_| "OpenQuota window could not be updated.".to_owned())
+}
+
 pub fn show_main_window(window: &WebviewWindow) {
     finish_native_panel_resize(window);
     crate::webview_memory::set_inactive(window, false);

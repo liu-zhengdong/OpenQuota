@@ -280,7 +280,9 @@ fn register_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
     app.global_shortcut()
         .on_shortcut(shortcut, |app, _, event| {
             if event.state == ShortcutState::Released {
-                toggle_main_window(app);
+                // The plugin reports hotkeys on its own listener thread, so the window work has to
+                // be handed back to the main thread.
+                window::dispatch_to_main_thread(app, toggle_main_window);
             }
         })
         .map_err(|_| {
@@ -374,7 +376,11 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        window::activate_existing_instance(app);
+        // A second launch reaches this callback on a D-Bus worker thread (Linux) or a background
+        // task (macOS), so bringing the running window forward has to happen on the main thread.
+        window::dispatch_to_main_thread(app, |app| {
+            window::activate_existing_instance(app);
+        });
     }));
 
     builder

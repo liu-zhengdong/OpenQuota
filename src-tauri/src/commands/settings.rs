@@ -107,7 +107,14 @@ async fn save_app_settings_inner(
             );
             return Err("OpenQuota window is unavailable.".to_owned());
         };
-        if let Err(error) = crate::window::apply_window_mode(&window, settings.window_mode, true) {
+        // Async commands run on the async runtime, while the window mode change reaches
+        // `current_monitor` and the tray positioning, so it belongs on the main thread.
+        let mode = settings.window_mode;
+        let applied = crate::window::await_on_main_thread(&app, move || {
+            crate::window::apply_window_mode(&window, mode, true)
+        })
+        .await;
+        if let Err(error) = applied {
             if autostart_changed {
                 let _ = set_autostart(&app, previous.launch_at_login);
             }
@@ -145,7 +152,11 @@ async fn save_app_settings_inner(
             );
             if window_mode_changed {
                 if let Some(window) = app.get_webview_window(crate::window::MAIN_WINDOW) {
-                    let _ = crate::window::apply_window_mode(&window, previous.window_mode, false);
+                    let previous_mode = previous.window_mode;
+                    let _ = crate::window::await_on_main_thread(&app, move || {
+                        crate::window::apply_window_mode(&window, previous_mode, false)
+                    })
+                    .await;
                 }
             }
             return Err(error);
