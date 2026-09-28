@@ -184,7 +184,7 @@ export interface AppSettings {
   density: 'default' | 'compact';
   reduceAnimations: boolean;
   windowMode: 'popup' | 'floating';
-  menuBarStyle: 'text' | 'bars';
+  menuBarStyle: 'text' | 'bars' | 'compact';
   usageDisplay: 'used' | 'left';
   resetDisplay: 'countdown' | 'exact';
   timeFormat: 'system' | 'twelveHour' | 'twentyFourHour';

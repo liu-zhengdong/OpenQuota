@@ -6,6 +6,8 @@ use svgtypes::{PathParser, PathSegment};
 use tauri::image::Image;
 use tiny_skia::{FillRule, Mask, Paint, Path, PathBuilder, Pixmap, Transform};
 
+use crate::quota_tier::{quota_tier, QuotaTier};
+
 const SOURCE: &str = include_str!("../../assets/openquota-tray.svg");
 const SOURCE_SIZE: f32 = 24.0;
 const ICON_SIZE: u32 = 32;
@@ -21,8 +23,6 @@ const TRACK_COLOR: Rgba = (142, 142, 147, 150);
 const HEALTHY_COLOR: Rgba = (22, 137, 239, 255);
 const CAUTION_COLOR: Rgba = (240, 195, 60, 255);
 const CRITICAL_COLOR: Rgba = (227, 72, 63, 255);
-const CRITICAL_THRESHOLD: f64 = 0.2;
-const HEALTHY_THRESHOLD: f64 = 0.6;
 
 struct GaugePaths {
     track: Vec<Path>,
@@ -129,13 +129,10 @@ fn sanitized_fraction(fraction: f64) -> f64 {
 }
 
 fn quota_color(remaining_fraction: f64) -> Rgba {
-    let remaining = sanitized_fraction(remaining_fraction);
-    if remaining >= HEALTHY_THRESHOLD {
-        HEALTHY_COLOR
-    } else if remaining > CRITICAL_THRESHOLD {
-        CAUTION_COLOR
-    } else {
-        CRITICAL_COLOR
+    match quota_tier(remaining_fraction) {
+        QuotaTier::Healthy => HEALTHY_COLOR,
+        QuotaTier::Caution => CAUTION_COLOR,
+        QuotaTier::Critical => CRITICAL_COLOR,
     }
 }
 

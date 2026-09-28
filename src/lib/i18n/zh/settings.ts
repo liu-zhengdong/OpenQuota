@@ -18,6 +18,7 @@ export const settings = {
   iconStyle: '图标样式',
   iconText: '文字',
   iconBars: '条形',
+  iconCompact: '紧凑',
   theme: '主题',
   themeSystem: '系统',
   themeLight: '浅色',

@@ -6,6 +6,8 @@ use svgtypes::{PathParser, PathSegment};
 use tauri::image::Image;
 use tiny_skia::{FillRule, Paint, Path, PathBuilder, Pixmap, Transform};
 
+use crate::quota_tier::QuotaTier;
+
 const ICON_SIZE: u32 = 36;
 const ICON_POINTS: f32 = 18.0;
 const ICON_SCALE: f32 = ICON_SIZE as f32 / ICON_POINTS;
@@ -20,6 +22,7 @@ const PROVIDER_ICON_INSET: f32 = 1.0;
 const SINGLE_VALUE_SIZE: f32 = 23.0;
 const STACKED_VALUE_SIZE: f32 = 17.0;
 const STACKED_BASELINES: [f32; 2] = [15.0, 32.0];
+const COMPACT_GAP: f32 = 10.0;
 const FONT_SOURCE: &[u8] = include_bytes!("../assets/fonts/Poppins-SemiBold.ttf");
 
 const CLAUDE_ICON: &str = include_str!("../../src/assets/provider-icons/claude.svg");
@@ -35,14 +38,37 @@ const ZAI_ICON: &str = include_str!("../../src/assets/provider-icons/zai.svg");
 const KIMI_ICON: &str = include_str!("../../src/assets/provider-icons/kimi.svg");
 const MINIMAX_ICON: &str = include_str!("../../src/assets/provider-icons/minimax.svg");
 
+type Rgb = (u8, u8, u8);
+
+const TEMPLATE_COLOR: Rgb = (0, 0, 0);
+// The compact strip is not a template image, so one color has to read on both the light and the
+// dark menu bar. These are the macOS system green/orange/red/gray, which Apple tunes for exactly
+// that; the gray stands for "no bounded quota pinned" rather than a guessed band.
+const COMPACT_HEALTHY_COLOR: Rgb = (52, 199, 89);
+const COMPACT_CAUTION_COLOR: Rgb = (255, 149, 0);
+const COMPACT_CRITICAL_COLOR: Rgb = (255, 59, 48);
+const COMPACT_UNBOUNDED_COLOR: Rgb = (142, 142, 147);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGroup {
     pub provider_id: String,
     pub values: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactGroup {
+    pub provider_id: String,
+    /// `None` when none of the provider's pinned metrics has a bounded quota.
+    pub tier: Option<QuotaTier>,
+}
+
 pub fn text_icon(groups: &[TextGroup]) -> Option<Image<'static>> {
     let strip = render_text_strip(groups)?;
+    Some(Image::new_owned(strip.rgba, strip.width, TEXT_HEIGHT))
+}
+
+pub fn compact_icon(groups: &[CompactGroup]) -> Option<Image<'static>> {
+    let strip = render_compact_strip(groups)?;
     Some(Image::new_owned(strip.rgba, strip.width, TEXT_HEIGHT))
 }
 
@@ -101,7 +127,7 @@ fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
     let mut x = OUTER_PADDING;
 
     for layout in groups {
-        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x);
+        draw_provider_icon(&mut pixmap, &layout.group.provider_id, x, TEMPLATE_COLOR);
         let text_x = x + PROVIDER_ICON_SIZE + ICON_TEXT_GAP;
         if layout.group.values.len() == 1 {
             let value = &layout.group.values[0];
@@ -126,6 +152,39 @@ fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
         rgba: pixmap.take_demultiplied(),
         width,
     })
+}
+
+fn render_compact_strip(groups: &[CompactGroup]) -> Option<RenderedStrip> {
+    if groups.is_empty() {
+        return None;
+    }
+    let content_width = PROVIDER_ICON_SIZE * groups.len() as f32
+        + COMPACT_GAP * groups.len().saturating_sub(1) as f32;
+    let width = (content_width + OUTER_PADDING * 2.0).ceil() as u32;
+    let mut pixmap = Pixmap::new(width, TEXT_HEIGHT).expect("menu bar strip dimensions are valid");
+    let mut x = OUTER_PADDING;
+    for group in groups {
+        draw_provider_icon(
+            &mut pixmap,
+            &group.provider_id,
+            x,
+            compact_color(group.tier),
+        );
+        x += PROVIDER_ICON_SIZE + COMPACT_GAP;
+    }
+    Some(RenderedStrip {
+        rgba: pixmap.take_demultiplied(),
+        width,
+    })
+}
+
+fn compact_color(tier: Option<QuotaTier>) -> Rgb {
+    match tier {
+        Some(QuotaTier::Healthy) => COMPACT_HEALTHY_COLOR,
+        Some(QuotaTier::Caution) => COMPACT_CAUTION_COLOR,
+        Some(QuotaTier::Critical) => COMPACT_CRITICAL_COLOR,
+        None => COMPACT_UNBOUNDED_COLOR,
+    }
 }
 
 fn bundled_font() -> &'static Font {
@@ -221,9 +280,9 @@ fn blend_alpha_mask(
     }
 }
 
-fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32) {
+fn draw_provider_icon(pixmap: &mut Pixmap, provider_id: &str, x: f32, color: Rgb) {
     let mut paint = Paint::default();
-    paint.set_color_rgba8(0, 0, 0, 255);
+    paint.set_color_rgba8(color.0, color.1, color.2, 255);
     paint.anti_alias = true;
     let icon_top = (TEXT_HEIGHT as f32 - PROVIDER_ICON_SIZE) / 2.0;
 
@@ -571,11 +630,18 @@ fn fill_rounded_bar(
 }
 
 #[cfg(test)]
+mod preview;
+
+#[cfg(test)]
 mod tests {
     use super::{
-        bar_fill, bar_icon, parse_svg_path, provider_path, render_bar_rgba, render_text_strip,
-        text_icon, visual_bar_fraction, TextGroup, ICON_SIZE, MAX_BARS, TEXT_HEIGHT,
+        bar_fill, bar_icon, compact_icon, parse_svg_path, provider_path, render_bar_rgba,
+        render_compact_strip, render_text_strip, text_icon, visual_bar_fraction, CompactGroup,
+        TextGroup, COMPACT_CAUTION_COLOR, COMPACT_CRITICAL_COLOR, COMPACT_GAP,
+        COMPACT_HEALTHY_COLOR, COMPACT_UNBOUNDED_COLOR, ICON_SIZE, MAX_BARS, OUTER_PADDING,
+        PROVIDER_ICON_SIZE, TEXT_HEIGHT,
     };
+    use crate::quota_tier::QuotaTier;
 
     fn text_group(provider_id: &str, values: &[&str]) -> TextGroup {
         TextGroup {
@@ -623,6 +689,87 @@ mod tests {
             .expect("public text renderer should return an image");
         assert_eq!(icon.height(), TEXT_HEIGHT);
         assert!(icon.width() > TEXT_HEIGHT);
+    }
+
+    fn compact_group(provider_id: &str, tier: Option<QuotaTier>) -> CompactGroup {
+        CompactGroup {
+            provider_id: provider_id.into(),
+            tier,
+        }
+    }
+
+    #[test]
+    fn compact_strip_grows_with_providers_and_is_empty_without_them() {
+        assert!(render_compact_strip(&[]).is_none());
+        assert!(compact_icon(&[]).is_none());
+
+        let widths = (1..=4)
+            .map(|count| {
+                let groups = vec![compact_group("codex", Some(QuotaTier::Healthy)); count];
+                let icon = compact_icon(&groups).expect("providers should render a strip");
+                assert_eq!(icon.height(), TEXT_HEIGHT);
+                assert_eq!(icon.rgba().len(), (icon.width() * TEXT_HEIGHT * 4) as usize);
+                icon.width()
+            })
+            .collect::<Vec<_>>();
+        assert!(widths.windows(2).all(|pair| pair[1] > pair[0]));
+        assert_eq!(widths[0], TEXT_HEIGHT);
+    }
+
+    #[test]
+    fn compact_marks_are_filled_with_their_band_color() {
+        let bands = [
+            (Some(QuotaTier::Healthy), COMPACT_HEALTHY_COLOR),
+            (Some(QuotaTier::Caution), COMPACT_CAUTION_COLOR),
+            (Some(QuotaTier::Critical), COMPACT_CRITICAL_COLOR),
+            (None, COMPACT_UNBOUNDED_COLOR),
+        ];
+        // The fallback disc is solid at its center, so the center pixel is a pure sample of the fill.
+        let groups = bands
+            .iter()
+            .map(|(tier, _)| compact_group("future-provider", *tier))
+            .collect::<Vec<_>>();
+        let strip = render_compact_strip(&groups).expect("marks should render");
+        let pixel = |x: u32, y: u32| {
+            let offset = ((y * strip.width + x) * 4) as usize;
+            [
+                strip.rgba[offset],
+                strip.rgba[offset + 1],
+                strip.rgba[offset + 2],
+                strip.rgba[offset + 3],
+            ]
+        };
+        for (index, (_, color)) in bands.iter().enumerate() {
+            let center_x = OUTER_PADDING
+                + index as f32 * (PROVIDER_ICON_SIZE + COMPACT_GAP)
+                + PROVIDER_ICON_SIZE / 2.0;
+            assert_eq!(
+                pixel(center_x as u32, TEXT_HEIGHT / 2),
+                [color.0, color.1, color.2, 255]
+            );
+        }
+
+        // Real provider marks carry the band color on every painted pixel, never the template black.
+        let strip = render_compact_strip(&[
+            compact_group("claude", Some(QuotaTier::Critical)),
+            compact_group("codex", None),
+        ])
+        .expect("marks should render");
+        let split = (OUTER_PADDING + PROVIDER_ICON_SIZE + COMPACT_GAP / 2.0) as usize;
+        let mut painted = [0_usize; 2];
+        for (index, rgba) in strip.rgba.as_chunks::<4>().0.iter().enumerate() {
+            if rgba[3] < 255 {
+                continue;
+            }
+            let (side, color) = if (index % strip.width as usize) < split {
+                (0, COMPACT_CRITICAL_COLOR)
+            } else {
+                (1, COMPACT_UNBOUNDED_COLOR)
+            };
+            painted[side] += 1;
+            assert_eq!((rgba[0], rgba[1], rgba[2]), color);
+        }
+        assert!(painted.iter().all(|count| *count > 0));
     }
 
     #[test]
