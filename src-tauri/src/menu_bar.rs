@@ -630,6 +630,9 @@ fn fill_rounded_bar(
 }
 
 #[cfg(test)]
+mod preview;
+
+#[cfg(test)]
 mod tests {
     use super::{
         bar_fill, bar_icon, compact_icon, parse_svg_path, provider_path, render_bar_rgba,
