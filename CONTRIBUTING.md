@@ -27,8 +27,11 @@ Security vulnerabilities should not be reported in a public issue. Follow
 
 ## Development setup
 
-You need Node.js 22 or later, pnpm 11.11.0, stable Rust, and the
+You need Node.js 22 or later, pnpm 11.11.0, stable Rust,
+[cargo-nextest](https://nexte.st/docs/installation/pre-built-binaries/), and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform.
+Rust tests run through nextest so that a test that hangs for 120 seconds is killed and
+reported as failed (see `src-tauri/.config/nextest.toml`).
 
 ```sh
 corepack pnpm install --frozen-lockfile
