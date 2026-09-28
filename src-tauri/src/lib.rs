@@ -4,6 +4,7 @@ mod commands;
 mod desktop_integration;
 mod hashing;
 mod i18n;
+mod instance_lock;
 mod logging;
 #[cfg(any(target_os = "macos", test))]
 mod menu_bar;
@@ -366,7 +367,8 @@ fn enable_xlib_threads() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Headless subcommands exit before any Tauri state exists, so they never
-    // start the GUI, claim the single-instance slot, or touch the network.
+    // start the GUI or claim the single-instance slot, and they only reach the
+    // network when explicitly asked to (`pace --refresh`).
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if let Some(exit_code) = cli::dispatch(&arguments) {
         std::process::exit(exit_code);
@@ -413,6 +415,14 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("openquota.db");
             let storage = Arc::new(Storage::open(&database_path)?);
+            // `openquota pace` probes this lock to tell whether anything is still refreshing the
+            // cached readings; the application works the same without it.
+            match instance_lock::acquire(&app_data_dir) {
+                Ok(lock) => {
+                    app.manage(lock);
+                }
+                Err(error) => app_warn!("lifecycle", "instance lock unavailable: {error}"),
+            }
             provider_environment::initialize(storage.load_provider_environment()?);
             provider_environment::refresh_for_next_launch(storage.clone());
             app.manage(Arc::new(PanelResizeSession::new(storage.clone())));

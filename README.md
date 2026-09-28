@@ -84,21 +84,36 @@ OpenQuota runs locally and has no account, cloud backend, analytics, or usage te
 
 ## Command line
 
-The same executable doubles as a read-only query tool. Passing the `pace` subcommand skips the GUI,
-the single-instance hand-off, and any network refresh: it opens the local database read-only, prints
-the latest cached provider snapshots, and exits.
+The same executable doubles as a query tool. Passing the `pace` subcommand skips the GUI and the
+single-instance hand-off: it opens the local database read-only, prints the latest cached snapshots
+of the providers turned on in the panel, and exits. Providers turned off in the panel are left out.
 
 ```sh
 /Applications/OpenQuota.app/Contents/MacOS/openquota pace          # aligned text table
 /Applications/OpenQuota.app/Contents/MacOS/openquota pace --json   # stable JSON array
+/Applications/OpenQuota.app/Contents/MacOS/openquota pace --refresh --only cursor,grok --timeout 15
 ```
 
 Each provider shows the window used for comparison (weekly when one exists, otherwise the longest
 percent window), used percent, elapsed percent of the period, spare percent (elapsed − used, so a
 positive value means usage is running behind an even pace), hours to reset, the short session
-window's used percent, the snapshot age, and a `DATA` column reading `cached` or `stale`. Rows are
-sorted by spare, highest first. `stale` means the row is older than the staleness window the panel
-marks, so the numbers are the last successful read rather than a current one.
+window's used percent, the snapshot age, and a `DATA` column reading `live`, `cached`, or `stale`.
+Rows are sorted by spare, highest first. `stale` means the row is older than the staleness window
+the panel marks, or a requested refresh failed, so the numbers are the last successful read rather
+than a current one. When the OpenQuota app is not running, nothing keeps the cached readings up to
+date: the command prints a line on stderr with the age of the oldest one, and the text table marks
+those rows with `*`.
+
+Without `--refresh` the command never touches the network and never writes. `--refresh` first pulls
+current readings from the enabled providers (or only those named with `--only`) in parallel, with
+a per-provider time limit set by `--timeout` in seconds (default 20). A pull that fails or times out
+keeps the earlier reading, marked `stale`, without failing the command; readings are never
+estimated. A pull still running at its limit may hold the exit back by up to 15 seconds after the
+report is printed, so a login it is renewing gets saved. A provider read within the last 60 seconds, by the app or an earlier run, is reused
+instead of pulled again. Pulled readings are not written to the application database, so they
+cannot collide with the running app; they are kept in `pace-live.json` next to it, a file only this
+command uses. As in the app, a pull may renew and save that provider's own expired login. Claude
+and Codex keep account records in the application database, so only the app refreshes them.
 
 `--json` prints a JSON array with camelCase fields and ISO 8601 UTC timestamps for scripts. Exit
 codes are `0` for a printed report, `1` when the database could not be read, `2` when it holds no
