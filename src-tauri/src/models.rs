@@ -608,6 +608,7 @@ pub enum DensityPreference {
 pub enum MenuBarStyle {
     Text,
     Bars,
+    Compact,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -784,9 +785,9 @@ pub struct SettingsViewState {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiKeyMutationOutcome, ApiKeyStatus, AppSettings, LogLevel, ProviderApiKeyState,
-        ProviderErrorKind, ProviderLink, ProviderMessage, ProviderSnapshot, ProviderSort,
-        ProviderViewState, WindowMode,
+        ApiKeyMutationOutcome, ApiKeyStatus, AppSettings, LogLevel, MenuBarStyle,
+        ProviderApiKeyState, ProviderErrorKind, ProviderLink, ProviderMessage, ProviderSnapshot,
+        ProviderSort, ProviderViewState, WindowMode,
     };
 
     #[test]
@@ -885,6 +886,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value["providerSort"], "spare");
+    }
+
+    #[test]
+    fn compact_menu_bar_style_round_trips_and_older_settings_keep_text() {
+        let value = serde_json::to_value(AppSettings {
+            menu_bar_style: MenuBarStyle::Compact,
+            ..AppSettings::default()
+        })
+        .unwrap();
+        assert_eq!(value["menuBarStyle"], "compact");
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.menu_bar_style, MenuBarStyle::Compact);
+
+        let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("menuBarStyle");
+        let settings: AppSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.menu_bar_style, MenuBarStyle::Text);
     }
 
     #[test]

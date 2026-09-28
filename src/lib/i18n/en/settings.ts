@@ -19,6 +19,7 @@ export const settings = {
   iconStyle: 'Icon Style',
   iconText: 'Text',
   iconBars: 'Bars',
+  iconCompact: 'Compact',
   theme: 'Theme',
   themeSystem: 'System',
   themeLight: 'Light',

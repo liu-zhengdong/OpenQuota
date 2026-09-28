@@ -30,7 +30,6 @@ struct TrayGroup {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct TrayGauge {
     display_fraction: f64,
-    #[cfg(any(not(target_os = "macos"), test))]
     remaining_fraction: f64,
 }
 
@@ -40,6 +39,7 @@ enum MacMenuBarIcon {
     Mark,
     Text(Vec<crate::menu_bar::TextGroup>),
     Bars(Vec<f64>),
+    Compact(Vec<crate::menu_bar::CompactGroup>),
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -121,6 +121,16 @@ fn mac_menu_bar_presentation(
                 },
             }
         }
+        crate::models::MenuBarStyle::Compact => {
+            let compact_groups = compact_groups(groups);
+            MacMenuBarPresentation {
+                icon: if compact_groups.is_empty() {
+                    MacMenuBarIcon::Mark
+                } else {
+                    MacMenuBarIcon::Compact(compact_groups)
+                },
+            }
+        }
     }
 }
 
@@ -165,6 +175,20 @@ fn apply_mac_menu_bar_presentation(
                 crate::app_warn!("tray", "macOS menu bar icon update failed");
             }
         }
+        MacMenuBarIcon::Compact(groups) => {
+            if tray.set_title(Some("")).is_err() {
+                crate::app_warn!("tray", "macOS menu bar title clear failed");
+            }
+            // Not a template: the system would recolor a template image to one tint and drop the
+            // quota bands. The empty-list fallback keeps the template mark like the other styles.
+            let result = match crate::menu_bar::compact_icon(&groups) {
+                Some(icon) => tray.set_icon_with_as_template(Some(icon), false),
+                None => tray.set_icon_with_as_template(Some(mark_icon()), true),
+            };
+            if result.is_err() {
+                crate::app_warn!("tray", "macOS menu bar icon update failed");
+            }
+        }
     }
 }
 
@@ -175,6 +199,24 @@ fn bar_fractions(groups: &[TrayGroup]) -> Vec<f64> {
         .flat_map(|group| group.metrics.iter())
         .filter_map(|metric| metric.gauge.map(|gauge| gauge.display_fraction))
         .take(crate::menu_bar::MAX_BARS)
+        .collect()
+}
+
+/// One mark per provider, banded by the tightest pinned bounded quota. Bands always follow the
+/// remaining share reported by the provider, independent of the used/left display preference.
+#[cfg(any(target_os = "macos", test))]
+fn compact_groups(groups: &[TrayGroup]) -> Vec<crate::menu_bar::CompactGroup> {
+    groups
+        .iter()
+        .map(|group| crate::menu_bar::CompactGroup {
+            provider_id: group.provider_id.clone(),
+            tier: group
+                .metrics
+                .iter()
+                .filter_map(|metric| metric.gauge)
+                .map(|gauge| crate::quota_tier::quota_tier(gauge.remaining_fraction))
+                .min(),
+        })
         .collect()
 }
 
@@ -275,7 +317,6 @@ fn tray_metric(
                                     UsageDisplay::Used => used_fraction,
                                     UsageDisplay::Left => 1.0 - used_fraction,
                                 },
-                                #[cfg(any(not(target_os = "macos"), test))]
                                 remaining_fraction: 1.0 - used_fraction,
                             }),
                         };
@@ -296,7 +337,6 @@ fn tray_metric(
                     detail: format!("{} {percent:.0}% {word}", quota.label),
                     gauge: Some(TrayGauge {
                         display_fraction,
-                        #[cfg(any(not(target_os = "macos"), test))]
                         remaining_fraction: 1.0 - used_fraction,
                     }),
                 }
@@ -412,10 +452,12 @@ mod tests {
     };
 
     use super::{
-        bar_fractions, format_count, mac_menu_bar_presentation, primary_gauge, resolved_groups,
-        text_groups, MacMenuBarIcon, MacMenuBarPresentation, TrayGauge, TrayGroup, TrayMetric,
+        bar_fractions, compact_groups, format_count, mac_menu_bar_presentation, primary_gauge,
+        resolved_groups, text_groups, MacMenuBarIcon, MacMenuBarPresentation, TrayGauge, TrayGroup,
+        TrayMetric,
     };
     use crate::service::UsageViewState;
+    use crate::{menu_bar::CompactGroup, quota_tier::QuotaTier};
 
     #[test]
     fn bundled_tray_mark_decodes_at_the_expected_size() {
@@ -514,6 +556,81 @@ mod tests {
         assert_eq!(
             mac_menu_bar_presentation(&unbounded, crate::models::MenuBarStyle::Bars),
             fallback
+        );
+    }
+
+    #[test]
+    fn compact_marks_band_each_provider_by_its_tightest_pinned_quota() {
+        let gauge = |remaining: f64| TrayMetric {
+            value: String::new(),
+            detail: String::new(),
+            gauge: Some(TrayGauge {
+                display_fraction: remaining,
+                remaining_fraction: remaining,
+            }),
+        };
+        let unbounded = TrayMetric {
+            value: "$4".into(),
+            detail: String::new(),
+            gauge: None,
+        };
+        let groups = vec![
+            TrayGroup {
+                provider_id: "claude".into(),
+                metrics: vec![gauge(0.9), gauge(0.35)],
+            },
+            TrayGroup {
+                provider_id: "codex".into(),
+                metrics: vec![unbounded.clone(), gauge(0.6)],
+            },
+            TrayGroup {
+                provider_id: "cursor".into(),
+                metrics: vec![gauge(0.2), gauge(1.0)],
+            },
+            TrayGroup {
+                provider_id: "grok".into(),
+                metrics: vec![unbounded],
+            },
+            TrayGroup {
+                provider_id: "zai".into(),
+                metrics: vec![gauge(f64::NAN), gauge(0.8)],
+            },
+        ];
+        let expected = vec![
+            CompactGroup {
+                provider_id: "claude".into(),
+                tier: Some(QuotaTier::Caution),
+            },
+            CompactGroup {
+                provider_id: "codex".into(),
+                tier: Some(QuotaTier::Healthy),
+            },
+            CompactGroup {
+                provider_id: "cursor".into(),
+                tier: Some(QuotaTier::Critical),
+            },
+            CompactGroup {
+                provider_id: "grok".into(),
+                tier: None,
+            },
+            CompactGroup {
+                provider_id: "zai".into(),
+                tier: Some(QuotaTier::Critical),
+            },
+        ];
+
+        assert_eq!(compact_groups(&groups), expected);
+        assert_eq!(
+            mac_menu_bar_presentation(&groups, crate::models::MenuBarStyle::Compact),
+            MacMenuBarPresentation {
+                icon: MacMenuBarIcon::Compact(expected),
+            }
+        );
+        assert_eq!(
+            mac_menu_bar_presentation(&[], crate::models::MenuBarStyle::Compact),
+            MacMenuBarPresentation {
+                icon: MacMenuBarIcon::Mark,
+            }
         );
     }
 
@@ -642,6 +759,13 @@ mod tests {
         assert_eq!(used_groups[0].metrics[0].value, "25%");
         assert_eq!(bar_fractions(&groups), vec![0.75, 0.4]);
         assert_eq!(bar_fractions(&used_groups), vec![0.25, 0.6]);
+        // Session 75% left and weekly 40% left: the weekly window sets the band either way.
+        let banded = vec![CompactGroup {
+            provider_id: "codex".into(),
+            tier: Some(QuotaTier::Caution),
+        }];
+        assert_eq!(compact_groups(&groups), banded);
+        assert_eq!(compact_groups(&used_groups), banded);
     }
 
     #[test]

@@ -209,6 +209,7 @@
           options={[
             { value: 'text', label: t('settings.iconText') },
             { value: 'bars', label: t('settings.iconBars') },
+            { value: 'compact', label: t('settings.iconCompact') },
           ]}
           onChange={(value) => patch({ menuBarStyle: value as AppSettings['menuBarStyle'] })}
         />

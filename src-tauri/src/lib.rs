@@ -14,6 +14,7 @@ mod policy;
 mod popup;
 mod provider_environment;
 mod providers;
+mod quota_tier;
 mod refresh_loop;
 mod service;
 mod settings;
