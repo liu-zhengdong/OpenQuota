@@ -148,6 +148,10 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Validate release tag
         run: node scripts/verify/verify-versions.js "$RELEASE_TAG"
 
@@ -167,7 +171,7 @@ jobs:
         run: pnpm test
 
       - name: Test Rust
-        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --all-targets
 
       - name: Lint Rust
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings

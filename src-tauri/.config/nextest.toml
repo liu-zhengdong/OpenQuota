@@ -1,0 +1,4 @@
+# Rust 单测由 cargo-nextest 跑：测试只有成功和失败，不许挂住。
+# 单个用例跑满 60 秒标为慢，满两个周期（120 秒）仍未结束就被杀掉并判失败。
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 2 }
