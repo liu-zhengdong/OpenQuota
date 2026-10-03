@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Keep this local subset identical to .github/workflows/ci.yml.
+# Credential-store integration (including macOS Keychain) stays in CI: it
+# changes the user's credential store/keychain, which k26 forbids here.
+# Never opt in through an inherited environment variable.
+unset OPENQUOTA_TEST_CREDENTIAL_STORE
+# The standalone space_behavior fullscreen test stays in CI: it uses AppKit
+# windows/the desktop. Its --list path must remain side-effect-free for nextest.
+# Linux system dependency installation stays in CI: it changes the host system.
+# Packaging, smoke tests and signing stay in CI: they need isolated platform
+# runners, launch applications, or require signing credentials/keychain changes.
+
+pnpm install --frozen-lockfile
+pnpm verify:versions
+pnpm verify:contracts
+pnpm lint
+pnpm check
+pnpm test
+cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+cargo nextest run --manifest-path src-tauri/Cargo.toml --all-targets
