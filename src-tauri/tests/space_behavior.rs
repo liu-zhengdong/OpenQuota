@@ -29,9 +29,10 @@ fn main() {
     space_behavior::allow_fullscreen_spaces(&window);
     assert_eq!(window.collectionBehavior(), behavior);
     assert!(!window.isVisible());
-    println!(
-        "space_behavior: both flags set, existing flags preserved, idempotent, window invisible"
-    );
+    // No stdout output: with harness = false, `cargo nextest run --all-targets`
+    // parses this binary's `--list` output and rejects lines that do not end
+    // in ": test" or ": benchmark". The real run happens via
+    // `cargo test --test space_behavior` (see ci.yml).
 }
 
 #[cfg(not(target_os = "macos"))]
