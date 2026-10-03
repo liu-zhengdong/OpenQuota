@@ -6,6 +6,8 @@
 
 mod freshness;
 mod live;
+mod report;
+use report::*;
 
 use std::{
     collections::HashSet,
@@ -15,15 +17,14 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     i18n::{resolve_ui_locale, system_language_tag},
     instance_lock,
-    models::{ProviderSnapshot, QuotaFormat, QuotaWindow, UiLanguagePreference},
-    pacing,
+    models::{ProviderSnapshot, UiLanguagePreference},
 };
 
 use freshness::RefreshOutcome;
@@ -58,7 +59,8 @@ Usage: openquota pace [--json] [--db <path>]
 Prints the latest quotas of the providers turned on in the OpenQuota panel.
 
 Without --refresh it only reads the local OpenQuota database, opened read-only:
-no GUI, no network access, and no writes.
+no GUI, no network access, and no writes. Account matching reuses local Claude
+noncredential account facts when readable; database identity alone remains unknown.
 
 --refresh first pulls current readings from the providers over the network,
 all in parallel with a time limit each. A pull that fails or times out keeps
@@ -352,10 +354,32 @@ fn build_report(
         }
     }
 
+    if shown.len() > EXPORT_LIMIT
+        || shown
+            .iter()
+            .any(|(s, _)| s.quotas.len() > EXPORT_LIMIT || s.value_metrics.len() > EXPORT_LIMIT)
+    {
+        return Err(PaceError::Query { path: path.to_path_buf(), detail: format!("pace export exceeds {EXPORT_LIMIT} cards or {EXPORT_LIMIT} quotas/value metrics per card; nothing truncated") });
+    }
     let now = Utc::now();
     let mut rows = shown
         .into_iter()
-        .map(|(snapshot, outcome)| build_row(snapshot, now, outcome))
+        .map(|(snapshot, outcome)| {
+            let current = match snapshot.provider_id.as_str() {
+                "claude" => crate::providers::claude::observed_account_identity(),
+                _ => None,
+            };
+            let matched = crate::providers::identity::cache_match(
+                current
+                    .as_deref()
+                    .map(crate::providers::CacheIdentity::Resolved)
+                    .unwrap_or(crate::providers::CacheIdentity::Unresolved),
+                snapshot.account_identity.as_ref(),
+            );
+            let mut row = build_row(snapshot, now, outcome);
+            row.cache_identity_match = matched;
+            row
+        })
         .collect::<Vec<_>>();
     sort_rows(&mut rows);
     let offline_notice = if rows.is_empty() {
@@ -436,7 +460,14 @@ fn refresh_readings(
             .iter()
             .position(|(snapshot, _)| snapshot.provider_id == provider_id);
         let reason = match result {
+            live::PullResult::Fresh(snapshot)
+                if snapshot.quotas.len() > EXPORT_LIMIT
+                    || snapshot.value_metrics.len() > EXPORT_LIMIT =>
+            {
+                format!("refresh exceeds pace quota/value metric limit {EXPORT_LIMIT}; nothing truncated")
+            }
             live::PullResult::Fresh(snapshot) => {
+                let snapshot = crate::providers::cache::cloud_facts(*snapshot);
                 fresh.push(snapshot.clone());
                 match index {
                     Some(index) => shown[index] = (snapshot, RefreshOutcome::Live),
@@ -493,28 +524,6 @@ impl fmt::Display for PaceError {
             ),
         }
     }
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct PaceRow {
-    provider_id: String,
-    plan: Option<String>,
-    window_id: Option<String>,
-    window_label: Option<String>,
-    used_percent: Option<f64>,
-    period_elapsed_percent: Option<f64>,
-    spare_percent: Option<f64>,
-    hours_to_reset: Option<f64>,
-    short_window_id: Option<String>,
-    short_window_used_percent: Option<f64>,
-    refreshed_at: String,
-    refreshed_hours_ago: f64,
-    /// The row is older than the staleness the desktop panel marks, or a requested pull
-    /// failed, so its numbers are a remembered last read rather than a current one.
-    stale: bool,
-    #[serde(skip)]
-    outcome: RefreshOutcome,
 }
 
 #[derive(Debug, Default)]
@@ -626,9 +635,20 @@ fn load_snapshots(connection: &Connection, path: &Path) -> Result<StoredSnapshot
             path: path.to_path_buf(),
         });
     }
+    let has_identity = connection
+        .prepare("PRAGMA table_info(provider_snapshots)")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(query_error)?
+        .iter()
+        .any(|column| column == "identity_key");
+    let identity_column = if has_identity { "identity_key" } else { "NULL" };
     let mut statement = connection
         .prepare(&format!(
-            "SELECT provider_id, payload FROM {SNAPSHOT_TABLE} ORDER BY provider_id"
+            "SELECT provider_id, payload, {identity_column} FROM {SNAPSHOT_TABLE} ORDER BY provider_id"
         ))
         .map_err(query_error)?;
     let mut stored = StoredSnapshots::default();
@@ -642,7 +662,25 @@ fn load_snapshots(connection: &Connection, path: &Path) -> Result<StoredSnapshot
             continue;
         };
         match serde_json::from_str::<ProviderSnapshot>(&payload) {
-            Ok(snapshot) => stored.snapshots.push(snapshot),
+            Ok(snapshot)
+                if snapshot.quotas.len() > EXPORT_LIMIT
+                    || snapshot.value_metrics.len() > EXPORT_LIMIT =>
+            {
+                stored.skipped.push(format!("Skipping snapshot for {provider_id}: quota/value metric count {}/{} exceeds pace limit {EXPORT_LIMIT}/{EXPORT_LIMIT}; nothing truncated.", snapshot.quotas.len(), snapshot.value_metrics.len()));
+            }
+            Ok(mut snapshot) if snapshot.provider_id == provider_id => {
+                if snapshot.account_identity.is_none() {
+                    let identity: Option<String> = entry.get(2).unwrap_or(None);
+                    snapshot.account_identity =
+                        crate::providers::identity::account_fact(&provider_id, identity.as_deref());
+                }
+                stored
+                    .snapshots
+                    .push(crate::providers::cache::cloud_facts(snapshot))
+            }
+            Ok(_) => stored.skipped.push(format!(
+                "Skipping snapshot for {provider_id}: payload belongs to another provider."
+            )),
             Err(error) => stored.skipped.push(format!(
                 "Skipping snapshot for {provider_id}: payload could not be parsed ({error})."
             )),
@@ -712,118 +750,6 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, rusqlite::
         |row| row.get(0),
     )?;
     Ok(count > 0)
-}
-
-fn build_row(snapshot: ProviderSnapshot, now: DateTime<Utc>, outcome: RefreshOutcome) -> PaceRow {
-    let comparison = comparison_window(&snapshot.quotas);
-    let short = short_window(&snapshot.quotas);
-    PaceRow {
-        provider_id: snapshot.provider_id,
-        plan: snapshot.plan,
-        window_id: comparison.map(|window| window.id.clone()),
-        window_label: comparison.map(|window| window.label.clone()),
-        used_percent: comparison.map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
-        period_elapsed_percent: comparison
-            .and_then(|window| pacing::period_elapsed_percent(window, now))
-            .map(round1),
-        spare_percent: comparison
-            .and_then(|window| pacing::spare_percent(window, now))
-            .map(round1),
-        hours_to_reset: comparison
-            .and_then(|window| window.resets_at)
-            .map(|reset| round1(hours_between(now, reset))),
-        short_window_id: short.map(|window| window.id.clone()),
-        short_window_used_percent: short
-            .map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
-        refreshed_at: snapshot
-            .refreshed_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        refreshed_hours_ago: round1(hours_between(snapshot.refreshed_at, now).max(0.0)),
-        stale: freshness::is_stale(outcome, snapshot.refreshed_at, now),
-        outcome,
-    }
-}
-
-/// Sorts by spare percentage, largest first, keeping providers without a
-/// comparable window at the end in their original order.
-fn sort_rows(rows: &mut [PaceRow]) {
-    rows.sort_by(
-        |left, right| match (left.spare_percent, right.spare_percent) {
-            (Some(left_spare), Some(right_spare)) => right_spare
-                .partial_cmp(&left_spare)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        },
-    );
-}
-
-fn comparison_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
-    let weekly = percent
-        .iter()
-        .copied()
-        .filter(|window| matches_name(window, "week"))
-        .collect::<Vec<_>>();
-    if !weekly.is_empty() {
-        return longest_window(weekly);
-    }
-    longest_window(percent)
-}
-
-fn short_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
-    if let Some(session) = percent
-        .iter()
-        .copied()
-        .find(|window| matches_name(window, "session"))
-    {
-        return Some(session);
-    }
-    percent
-        .iter()
-        .copied()
-        .filter(|window| {
-            window.period_seconds > 0 && window.period_seconds <= SHORT_WINDOW_MAX_PERIOD_SECONDS
-        })
-        .reduce(|best, window| {
-            if window.period_seconds < best.period_seconds {
-                window
-            } else {
-                best
-            }
-        })
-}
-
-fn percent_windows(quotas: &[QuotaWindow]) -> impl Iterator<Item = &QuotaWindow> {
-    quotas
-        .iter()
-        .filter(|window| window.format == QuotaFormat::Percent)
-}
-
-fn matches_name(window: &QuotaWindow, needle: &str) -> bool {
-    window.id.to_ascii_lowercase().contains(needle)
-        || window.label.to_ascii_lowercase().contains(needle)
-}
-
-fn longest_window(windows: Vec<&QuotaWindow>) -> Option<&QuotaWindow> {
-    windows.into_iter().reduce(|best, window| {
-        if window.period_seconds > best.period_seconds {
-            window
-        } else {
-            best
-        }
-    })
-}
-
-fn hours_between(start: DateTime<Utc>, end: DateTime<Utc>) -> f64 {
-    end.signed_duration_since(start).num_seconds() as f64 / 3_600.0
-}
-
-fn round1(value: f64) -> f64 {
-    // The `+ 0.0` normalizes negative zero away from JSON and text output.
-    (value * 10.0).round() / 10.0 + 0.0
 }
 
 fn database_path(explicit: Option<&Path>, environment: Option<OsString>) -> PathBuf {
@@ -999,6 +925,7 @@ mod tests {
             format: QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -1016,6 +943,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 
@@ -1174,6 +1103,12 @@ mod tests {
         assert_eq!(
             value,
             serde_json::json!({
+                "quotas": serde_json::to_value(&row.quotas).unwrap(),
+                "valueMetrics": [], "statusMetrics": [], "notices": [], "warnings": [],
+                "accountIdentity": null, "sharedScope": null, "cacheIdentityMatch": "unknown",
+                "remembered": false, "lastAttemptAt": null, "errorKind": null,
+                "refreshOutcome": "notRequested", "dataQuality": "cache",
+                "quotaCount": 2, "quotaLimit": 64, "valueMetricCount": 0, "valueMetricLimit": 64,
                 "providerId": "codex",
                 "plan": "Plus",
                 "windowId": "weekly",

@@ -1,18 +1,7 @@
 {
   "providerId": "commandcode",
-  "plan": "Pro",
+  "plan": "individual-pro",
   "quotas": [
-    {
-      "id": "credits",
-      "label": "Credits",
-      "usedPercent": 47.368421052631575,
-      "resetsAt": "2026-11-01T00:00:00Z",
-      "periodSeconds": 2678400,
-      "format": "dollars",
-      "usedValue": 18.0,
-      "limitValue": 38.0,
-      "estimated": false
-    },
     {
       "id": "fiveHour",
       "label": "5-hour",
@@ -22,7 +11,10 @@
       "format": "percent",
       "usedValue": 2.0,
       "limitValue": 10.0,
-      "estimated": false
+      "estimated": false,
+      "remainingValue": null,
+      "unit": null,
+      "sourceNote": null
     },
     {
       "id": "weekly",
@@ -33,7 +25,10 @@
       "format": "percent",
       "usedValue": 20.0,
       "limitValue": 50.0,
-      "estimated": false
+      "estimated": false,
+      "remainingValue": null,
+      "unit": null,
+      "sourceNote": null
     }
   ],
   "valueMetrics": [
@@ -97,5 +92,7 @@
   "notices": [],
   "warnings": [],
   "refreshedAt": "2026-10-03T00:00:00Z",
-  "remembered": false
+  "remembered": false,
+  "accountIdentity": null,
+  "sharedScope": null
 }

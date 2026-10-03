@@ -36,7 +36,7 @@
   }: Props = $props();
   const used = $derived(Math.min(100, Math.max(0, quota.usedPercent)));
   const remaining = $derived(Math.max(0, 100 - used));
-  const countUnit = $derived(quota.unit?.trim() || t('common.requests'));
+  const countUnit = $derived(quota.unit?.trim() || t('common.unknownUnit'));
   const title = $derived(windowLabel(quota.id, quota.label));
   const estimateNote = $derived(quota.sourceNote?.trim() || t('metrics.estimatedNote'));
   const reading = $derived.by(() => {

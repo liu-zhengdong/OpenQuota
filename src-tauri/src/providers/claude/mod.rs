@@ -383,6 +383,8 @@ impl ClaudeProvider {
                 warnings,
                 refreshed_at: now,
                 remembered: false,
+                account_identity: None,
+                shared_scope: None,
             });
         }
         if !credential.has_profile_scope() {
@@ -401,6 +403,8 @@ impl ClaudeProvider {
                 warnings,
                 refreshed_at: now,
                 remembered: false,
+                account_identity: None,
+                shared_scope: None,
             });
         }
         self.activate_live_usage_cache(credential.fingerprint());
@@ -493,6 +497,8 @@ impl ClaudeProvider {
                 warnings,
                 refreshed_at: Utc::now(),
                 remembered: true,
+                account_identity: None,
+                shared_scope: None,
             };
         };
         snapshot.remembered = true;
@@ -526,6 +532,11 @@ impl ClaudeProvider {
             warnings,
             refreshed_at: now,
             remembered: false,
+            account_identity: crate::providers::identity::account_fact(
+                self.provider_id(),
+                self.account_identity.as_deref(),
+            ),
+            shared_scope: None,
         };
         if let Ok(mut last) = self.last_good.lock() {
             *last = Some(snapshot.clone());
@@ -708,32 +719,51 @@ impl crate::providers::UsageProvider for ClaudeProvider {
         true
     }
 
+    fn current_account_identity(&self) -> Option<String> {
+        accounts::identity_for_scope(&self.credential_scope)
+    }
+
     fn account_identity(&self) -> Option<&str> {
         self.account_identity.as_deref()
     }
 
     fn refresh(&self) -> Result<ProviderSnapshot, crate::providers::ProviderError> {
-        self.refresh_inner().map_err(|error| {
-            use crate::models::ProviderErrorKind as Kind;
-
-            let kind = match error {
-                ClaudeError::NotLoggedIn
-                | ClaudeError::DesktopAppOnly
-                | ClaudeError::SessionExpired
-                | ClaudeError::TokenExpired
-                | ClaudeError::CredentialsChanged
-                | ClaudeError::AccountChanged => Kind::Authentication,
-                ClaudeError::InvalidOAuthUrl | ClaudeError::InvalidResponse => {
-                    Kind::InvalidResponse
+        self.refresh_inner()
+            .map(|mut snapshot| {
+                if !snapshot.remembered {
+                    snapshot.account_identity = crate::providers::identity::account_fact(
+                        self.provider_id(),
+                        self.account_identity.as_deref(),
+                    );
                 }
-                ClaudeError::AuthWrite => Kind::CredentialStorage,
-                ClaudeError::RequestFailed(429) => Kind::RateLimited,
-                ClaudeError::RequestFailed(_) | ClaudeError::ConnectionFailed => Kind::Network,
-                ClaudeError::AccountStore(_) => Kind::Internal,
-            };
-            crate::providers::ProviderError::from_display(kind, error)
-        })
+                snapshot
+            })
+            .map_err(|error| {
+                use crate::models::ProviderErrorKind as Kind;
+
+                let kind = match error {
+                    ClaudeError::NotLoggedIn
+                    | ClaudeError::DesktopAppOnly
+                    | ClaudeError::SessionExpired
+                    | ClaudeError::TokenExpired
+                    | ClaudeError::CredentialsChanged
+                    | ClaudeError::AccountChanged => Kind::Authentication,
+                    ClaudeError::InvalidOAuthUrl | ClaudeError::InvalidResponse => {
+                        Kind::InvalidResponse
+                    }
+                    ClaudeError::AuthWrite => Kind::CredentialStorage,
+                    ClaudeError::RequestFailed(429) => Kind::RateLimited,
+                    ClaudeError::RequestFailed(_) | ClaudeError::ConnectionFailed => Kind::Network,
+                    ClaudeError::AccountStore(_) => Kind::Internal,
+                };
+                crate::providers::ProviderError::from_display(kind, error)
+            })
     }
+}
+
+/// Read only existing account facts; never inspects a credential fingerprint or keychain.
+pub(crate) fn observed_account_identity() -> Option<String> {
+    accounts::identity_for_scope(&auth::ClaudeCredentialScope::Standard)
 }
 
 #[cfg(test)]
@@ -801,6 +831,7 @@ mod tests {
                 format: QuotaFormat::Percent,
                 used_value: None,
                 limit_value: None,
+                remaining_value: None,
                 unit: None,
                 estimated: false,
                 source_note: None,
@@ -824,6 +855,8 @@ mod tests {
                 .collect(),
             refreshed_at,
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 
@@ -972,7 +1005,10 @@ mod tests {
     fn rate_limited_snapshot_replays_remembered_limits_with_their_read_time() {
         let provider = ClaudeProvider::new();
         let read_at = Utc::now() - Duration::minutes(42);
-        *provider.last_good.lock().unwrap() = Some(remembered_limit_snapshot(31.0, read_at, false));
+        let mut remembered = remembered_limit_snapshot(31.0, read_at, false);
+        remembered.account_identity =
+            crate::providers::identity::account_fact("claude", Some("synthetic-account-a"));
+        *provider.last_good.lock().unwrap() = Some(remembered.clone());
 
         let snapshot = provider.rate_limited_snapshot(None, 42, Vec::new());
 
@@ -981,6 +1017,7 @@ mod tests {
         // The numbers are only as fresh as the read they came from, so the card must not
         // claim the retry window refreshed them.
         assert_eq!(snapshot.refreshed_at, read_at);
+        assert_eq!(snapshot.account_identity, remembered.account_identity);
         assert_eq!(snapshot.warnings[0].id, "claude.rateLimitedStale");
         assert_eq!(
             snapshot.notices[0]
@@ -1108,6 +1145,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
 
         provider.activate_live_usage_cache([1; 32]);

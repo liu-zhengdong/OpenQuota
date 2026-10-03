@@ -82,3 +82,19 @@ impl ZaiClient {
         Self::with_endpoints(subscription_url, quota_url, timeout).unwrap()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{QUOTA_URL, SUBSCRIPTION_URL};
+
+    #[test]
+    fn production_channel_is_international_plan_usage_not_inference_or_balance() {
+        assert_eq!(QUOTA_URL, "https://api.z.ai/api/monitor/usage/quota/limit");
+        assert_eq!(
+            SUBSCRIPTION_URL,
+            "https://api.z.ai/api/biz/subscription/list"
+        );
+        assert!(!QUOTA_URL.contains("open.bigmodel.cn"));
+        assert!(!QUOTA_URL.contains("/coding/paas/"));
+    }
+}

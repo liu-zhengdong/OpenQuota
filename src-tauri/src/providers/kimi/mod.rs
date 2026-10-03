@@ -124,6 +124,8 @@ impl KimiProvider {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         })
     }
 }

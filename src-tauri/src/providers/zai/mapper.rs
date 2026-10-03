@@ -80,18 +80,14 @@ pub fn map_quota(body: &Value) -> Result<Vec<QuotaWindow>, ZaiError> {
         }
     }
 
-    let web_searches = limits
+    let mcp_usage = limits
         .iter()
         .copied()
         .find(|entry| matches_limit(entry, "TIME_LIMIT"))
-        .map(web_search_quota)
+        .map(mcp_quota)
         .transpose()?;
 
-    Ok(session
-        .into_iter()
-        .chain(weekly)
-        .chain(web_searches)
-        .collect())
+    Ok(session.into_iter().chain(weekly).chain(mcp_usage).collect())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -139,9 +135,7 @@ fn percent_quota(
     entry: &serde_json::Map<String, Value>,
     window: TokenWindow,
 ) -> Result<QuotaWindow, ZaiError> {
-    let used_percent = number(entry.get("percentage"))
-        .ok_or(ZaiError::InvalidResponse)?
-        .clamp(0.0, 100.0);
+    let used_percent = number(entry.get("percentage")).ok_or(ZaiError::InvalidResponse)?;
     let (id, label) = match window.kind {
         TokenWindowKind::Session => ("session", "Session"),
         TokenWindowKind::Weekly => ("weekly", "Weekly"),
@@ -155,13 +149,14 @@ fn percent_quota(
         format: QuotaFormat::Percent,
         used_value: None,
         limit_value: None,
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,
     })
 }
 
-fn web_search_quota(entry: &serde_json::Map<String, Value>) -> Result<QuotaWindow, ZaiError> {
+fn mcp_quota(entry: &serde_json::Map<String, Value>) -> Result<QuotaWindow, ZaiError> {
     let used = number(entry.get("currentValue"))
         .filter(|value| *value >= 0.0)
         .ok_or(ZaiError::InvalidResponse)?;
@@ -170,20 +165,25 @@ fn web_search_quota(entry: &serde_json::Map<String, Value>) -> Result<QuotaWindo
         .ok_or(ZaiError::InvalidResponse)?;
     Ok(QuotaWindow {
         id: "webSearches".into(),
-        label: "Web Searches".into(),
-        used_percent: if limit > 0.0 {
-            (used / limit * 100.0).clamp(0.0, 100.0)
-        } else {
-            0.0
-        },
+        label: "MCP Usage".into(),
+        used_percent: number(entry.get("percentage")).unwrap_or_else(|| {
+            if limit > 0.0 {
+                (used / limit * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        }),
         resets_at: reset_time(entry.get("nextResetTime")),
-        period_seconds: MONTHLY_PERIOD_SECONDS,
+        period_seconds: 0,
         format: QuotaFormat::Count,
         used_value: Some(used),
         limit_value: Some(limit),
-        unit: Some("searches".into()),
+        remaining_value: number(entry.get("remaining")),
+        unit: None,
         estimated: false,
-        source_note: None,
+        source_note: Some(
+            format!("data.limits.TIME_LIMIT: MCP monthly usage; count unit and calendar seconds unknown; source unit={}, number={}", entry.get("unit").unwrap_or(&Value::Null), entry.get("number").unwrap_or(&Value::Null)),
+        ),
     })
 }
 
@@ -215,7 +215,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use serde_json::{json, Value};
 
-    use super::{is_no_coding_plan, map_quota, map_usage, plan_name, MONTHLY_PERIOD_SECONDS};
+    use super::{is_no_coding_plan, map_quota, map_usage, plan_name};
     use crate::{models::QuotaFormat, providers::zai::ZaiError};
 
     fn captured_quota() -> Value {
@@ -253,26 +253,42 @@ mod tests {
         assert_eq!(web.format, QuotaFormat::Count);
         assert_eq!(web.used_value, Some(0.0));
         assert_eq!(web.limit_value, Some(1_000.0));
-        assert_eq!(web.unit.as_deref(), Some("searches"));
-        assert_eq!(web.period_seconds, MONTHLY_PERIOD_SECONDS);
+        assert_eq!(web.unit, None);
+        assert_eq!(web.remaining_value, Some(1000.0));
+        assert_eq!(web.label, "MCP Usage");
+        assert_eq!(web.period_seconds, 0);
         assert!(!web.estimated);
-        assert_eq!(web.source_note, None);
+        assert!(web.source_note.as_deref().unwrap().contains("TIME_LIMIT"));
     }
 
     #[test]
-    fn payload_windows_drive_classification_and_percentages_are_clamped() {
+    fn mcp_source_precision_remaining_and_unknown_unit_survive() {
         let mapped = map_quota(&json!({"data":{"limits":[
-            {"type":"TOKENS_LIMIT","unit":3,"number":3,"percentage":-10},
-            {"type":"TOKENS_LIMIT","unit":4,"number":3,"percentage":"150"}
+            {"type":"TIME_LIMIT","currentValue":1.23456789,"usage":100,
+             "remaining":0,"percentage":25.123456789}
+        ]}}))
+        .unwrap();
+        assert_eq!(mapped[0].used_percent, 25.123456789);
+        assert_eq!(mapped[0].remaining_value, Some(0.0));
+        assert_eq!(mapped[0].used_value, Some(1.23456789));
+        assert_eq!(mapped[0].unit, None);
+        assert_eq!(mapped[0].resets_at, None);
+    }
+
+    #[test]
+    fn payload_windows_drive_classification_and_percentages_retain_source_precision() {
+        let mapped = map_quota(&json!({"data":{"limits":[
+            {"type":"TOKENS_LIMIT","unit":3,"number":3,"percentage":10.123456789},
+            {"type":"TOKENS_LIMIT","unit":4,"number":3,"percentage":"99.123456789"}
         ]}}))
         .unwrap();
 
         assert_eq!(mapped[0].id, "session");
         assert_eq!(mapped[0].period_seconds, 3 * 60 * 60);
-        assert_eq!(mapped[0].used_percent, 0.0);
+        assert_eq!(mapped[0].used_percent, 10.123456789);
         assert_eq!(mapped[1].id, "weekly");
         assert_eq!(mapped[1].period_seconds, 3 * 24 * 60 * 60);
-        assert_eq!(mapped[1].used_percent, 100.0);
+        assert_eq!(mapped[1].used_percent, 99.123456789);
     }
 
     #[test]

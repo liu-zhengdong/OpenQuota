@@ -11,16 +11,7 @@ use crate::models::{
 
 pub(crate) fn definition() -> ProviderDefinition {
     use MetricSection::{AlwaysVisible, OnDemand};
-    let mut metrics = vec![MetricDefinition::quota(
-        "commandcode.credits",
-        "Credits",
-        "credits",
-        false,
-        true,
-        OnDemand,
-        false,
-        "C",
-    )];
+    let mut metrics = vec![];
     for (id, label, section) in [
         ("remaining", "Total remaining", AlwaysVisible),
         ("freeCredits", "Free credits", AlwaysVisible),

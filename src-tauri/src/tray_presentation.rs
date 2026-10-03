@@ -681,6 +681,7 @@ mod tests {
                     format: crate::models::QuotaFormat::Percent,
                     used_value: None,
                     limit_value: None,
+                    remaining_value: None,
                     unit: None,
                     estimated: false,
                     source_note: None,
@@ -694,6 +695,7 @@ mod tests {
                     format: crate::models::QuotaFormat::Percent,
                     used_value: None,
                     limit_value: None,
+                    remaining_value: None,
                     unit: None,
                     estimated: false,
                     source_note: None,
@@ -705,6 +707,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let provider_state = ProviderViewState {
             snapshot: Some(snapshot),
@@ -782,6 +786,7 @@ mod tests {
                 format: crate::models::QuotaFormat::Count,
                 used_value: Some(25.0),
                 limit_value: Some(100.0),
+                remaining_value: None,
                 unit: Some("searches".into()),
                 estimated: false,
                 source_note: None,
@@ -792,6 +797,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let catalog = ProviderRegistry::from_definitions(vec![cursor::definition()]).unwrap();
         let definition = catalog.metric("cursor.requests").unwrap();
@@ -902,6 +909,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let catalog = ProviderRegistry::from_definitions(vec![codex::definition()]).unwrap();
         let metric = super::tray_metric(
@@ -933,6 +942,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let definition = MetricDefinition::status(
             "grok.payAsYouGo",

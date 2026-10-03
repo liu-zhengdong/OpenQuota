@@ -7,7 +7,6 @@ use super::{client::UsageResponse, CodexError};
 
 const SESSION_PERIOD_SECONDS: u64 = 5 * 60 * 60;
 const WEEKLY_PERIOD_SECONDS: u64 = 7 * 24 * 60 * 60;
-const CREDIT_USD_RATE: f64 = 0.04;
 
 pub struct MappedUsage {
     pub plan: Option<String>,
@@ -236,6 +235,7 @@ fn map_window(
         format: QuotaFormat::Percent,
         used_value: None,
         limit_value: None,
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,
@@ -266,7 +266,7 @@ fn map_reset_credits(body: &Value, dedicated: Option<&UsageResponse>) -> Option<
         id: "rateLimitResets".into(),
         label: "Rate Limit Resets".into(),
         values: vec![MetricValue {
-            number: count.floor(),
+            number: count,
             kind: MetricValueKind::Count,
             label: Some("available".into()),
             estimated: false,
@@ -289,24 +289,16 @@ fn reset_credits_source<'a>(
 }
 
 fn credits_metric(remaining: f64) -> ValueMetric {
-    let credits = remaining.max(0.0).floor();
+    let credits = remaining.max(0.0);
     ValueMetric {
         id: "credits".into(),
         label: "Extra Usage".into(),
-        values: vec![
-            MetricValue {
-                number: credits * CREDIT_USD_RATE,
-                kind: MetricValueKind::Dollars,
-                label: None,
-                estimated: true,
-            },
-            MetricValue {
-                number: credits,
-                kind: MetricValueKind::Count,
-                label: Some("credits".into()),
-                estimated: false,
-            },
-        ],
+        values: vec![MetricValue {
+            number: credits,
+            kind: MetricValueKind::Count,
+            label: Some("credits".into()),
+            estimated: false,
+        }],
         expiries_at: Vec::new(),
     }
 }
@@ -517,6 +509,8 @@ mod tests {
                 warnings: Vec::new(),
                 refreshed_at: now,
                 remembered: false,
+                account_identity: None,
+                shared_scope: None,
             }
         };
         let evaluator = NotificationEvaluator::default();
@@ -642,16 +636,16 @@ mod tests {
     }
 
     #[test]
-    fn credits_floor_before_pricing_and_body_precedes_header() {
+    fn credits_preserve_source_precision_and_body_precedes_header() {
         let mut usage = response(json!({"credits": {"balance": 821.9}}));
         usage
             .headers
             .insert("x-codex-credits-balance".into(), "999".into());
         let mapped = map_usage(&usage, None, Utc::now()).unwrap();
         let credits = value_metric(&mapped, "credits");
-        assert_eq!(credits.values[0].kind, MetricValueKind::Dollars);
-        assert_eq!(credits.values[0].number, 32.84);
-        assert_eq!(credits.values[1].number, 821.0);
+        assert_eq!(credits.values[0].kind, MetricValueKind::Count);
+        assert_eq!(credits.values[0].number, 821.9);
+        assert_eq!(credits.values.len(), 1);
     }
 
     #[test]
@@ -661,7 +655,7 @@ mod tests {
             .headers
             .insert("x-codex-credits-balance".into(), "12.9".into());
         let mapped = map_usage(&header, None, Utc::now()).unwrap();
-        assert_eq!(value_metric(&mapped, "credits").values[1].number, 12.0);
+        assert_eq!(value_metric(&mapped, "credits").values[0].number, 12.9);
 
         let mapped = map_usage(
             &response(json!({"credits": {"has_credits": false}})),
@@ -669,7 +663,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert_eq!(value_metric(&mapped, "credits").values[1].number, 0.0);
+        assert_eq!(value_metric(&mapped, "credits").values[0].number, 0.0);
     }
 
     #[test]

@@ -150,6 +150,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: now() - age,
             remembered,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 

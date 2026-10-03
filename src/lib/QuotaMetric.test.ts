@@ -130,6 +130,12 @@ describe('quota pacing presentation', () => {
     );
   });
 
+  it('keeps a missing count unit unknown', () => {
+    show({ ...quota(24), format: 'count', usedValue: 120, limitValue: 500, unit: null });
+    expect(screen.getByRole('button', { name: '380 (unit unknown) left' })).toBeInTheDocument();
+    expect(screen.queryByText(/requests left/)).not.toBeInTheDocument();
+  });
+
   it('marks inferred quotas with their source note', () => {
     show({
       ...quota(24),

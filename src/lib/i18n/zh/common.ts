@@ -13,7 +13,7 @@ export const common = {
   used: '已用',
   left: '剩余',
   spent: '已花费',
-  requests: '次请求',
+  unknownUnit: '（单位未知）',
   durationSeconds: '{seconds} 秒',
   durationOneMinute: '1 分钟',
   durationMinutes: '{minutes} 分钟',

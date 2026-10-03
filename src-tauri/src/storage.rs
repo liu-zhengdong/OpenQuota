@@ -114,15 +114,11 @@ impl Storage {
             })
             .map(|json| {
                 let mut snapshot: ProviderSnapshot = serde_json::from_str(&json.0)?;
-                // Count quotas predate the unit field. The only count quota persisted by older
-                // releases was request-based, so normalize it once at the cache boundary instead of
-                // teaching every presentation surface to infer provider semantics.
-                for quota in &mut snapshot.quotas {
-                    if quota.format == crate::models::QuotaFormat::Count && quota.unit.is_none() {
-                        quota.unit = Some("requests".into());
-                    }
+                if snapshot.account_identity.is_none() {
+                    snapshot.account_identity =
+                        crate::providers::identity::account_fact(provider_id, json.1.as_deref());
                 }
-                Ok(snapshot)
+                Ok(crate::providers::cache::cloud_facts(snapshot))
             })
             .transpose()
     }
@@ -373,6 +369,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
 
         storage.save_snapshot(&snapshot).unwrap();
@@ -398,6 +396,11 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: crate::providers::identity::account_fact(
+                "claude",
+                Some("identity-a"),
+            ),
+            shared_scope: None,
         };
 
         storage
@@ -518,7 +521,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_count_quota_cache_is_normalized_at_load_boundary() {
+    fn legacy_count_quota_does_not_invent_an_unknown_unit() {
         let directory = tempdir().unwrap();
         let storage = Storage::open(&directory.path().join("openquota.db")).unwrap();
         let snapshot = ProviderSnapshot {
@@ -533,6 +536,7 @@ mod tests {
                 format: QuotaFormat::Count,
                 used_value: Some(25.0),
                 limit_value: Some(100.0),
+                remaining_value: None,
                 unit: None,
                 estimated: false,
                 source_note: None,
@@ -543,13 +547,15 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
 
         storage.save_snapshot(&snapshot).unwrap();
 
         assert_eq!(
             storage.load_snapshot("cursor").unwrap().unwrap().quotas[0].unit,
-            Some("requests".into())
+            None
         );
     }
 

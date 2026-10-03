@@ -114,7 +114,19 @@ impl ProviderService {
             .read()
             .map(|value| value.clone())
             .unwrap_or_default();
-        for state in providers.values_mut() {
+        for (id, state) in &mut providers {
+            state.cache_identity_match = crate::providers::identity::cache_match(
+                self.registry
+                    .runtime(id)
+                    .and_then(|p| p.current_account_identity())
+                    .as_deref()
+                    .map(crate::providers::CacheIdentity::Resolved)
+                    .unwrap_or(crate::providers::CacheIdentity::Unresolved),
+                state
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.account_identity.as_ref()),
+            );
             update_staleness_from_snapshot_age(state);
         }
         let last_full_refresh_at = self
@@ -431,6 +443,18 @@ impl ProviderService {
             .ok()
             .and_then(|states| states.get(provider_id).cloned())
             .unwrap_or_default();
+        state.cache_identity_match = crate::providers::identity::cache_match(
+            self.registry
+                .runtime(provider_id)
+                .and_then(|p| p.current_account_identity())
+                .as_deref()
+                .map(crate::providers::CacheIdentity::Resolved)
+                .unwrap_or(crate::providers::CacheIdentity::Unresolved),
+            state
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.account_identity.as_ref()),
+        );
         update_staleness_from_snapshot_age(&mut state);
         state
     }
@@ -440,6 +464,15 @@ impl ProviderService {
         provider_id: &str,
         result: Result<ProviderRefresh, ProviderError>,
     ) -> ProviderViewState {
+        let result = result.map(|mut refresh| {
+            if !refresh.snapshot.remembered && refresh.snapshot.account_identity.is_none() {
+                refresh.snapshot.account_identity = crate::providers::identity::account_fact(
+                    provider_id,
+                    refresh.cache_identity.as_deref(),
+                );
+            }
+            refresh
+        });
         let account_error = result
             .as_ref()
             .ok()
@@ -622,11 +655,10 @@ fn validate_snapshot(
                 .map(|metric| metric.id.as_str()),
         )
         || snapshot.quotas.iter().any(|quota| {
-            (quota.format == crate::models::QuotaFormat::Count
-                && quota
-                    .unit
-                    .as_deref()
-                    .is_none_or(|unit| unit.trim().is_empty()))
+            quota
+                .unit
+                .as_deref()
+                .is_some_and(|unit| unit.trim().is_empty())
                 || (quota.estimated
                     && quota
                         .source_note
@@ -908,6 +940,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 
@@ -939,6 +973,108 @@ mod tests {
             .is_some_and(|state| !state.runner_active)
     }
 
+    struct FailingAccountSwitch {
+        switched: Arc<std::sync::atomic::AtomicBool>,
+    }
+    impl UsageProvider for FailingAccountSwitch {
+        fn definition(&self) -> ProviderDefinition {
+            let mut definition = test_definition("claude");
+            for (id, label) in [("weekly", "Weekly"), ("monthly", "Monthly")] {
+                definition.metrics.push(MetricDefinition::quota(
+                    &format!("claude.{id}"),
+                    label,
+                    id,
+                    false,
+                    true,
+                    MetricSection::AlwaysVisible,
+                    false,
+                    "Q",
+                ));
+            }
+            definition
+        }
+        fn has_local_credentials(&self) -> bool {
+            true
+        }
+        fn cache_identity(&self) -> crate::providers::CacheIdentity<'_> {
+            crate::providers::CacheIdentity::Resolved("synthetic-account-a")
+        }
+        fn current_account_identity(&self) -> Option<String> {
+            Some(
+                if self.switched.load(Ordering::SeqCst) {
+                    "synthetic-account-b"
+                } else {
+                    "synthetic-account-a"
+                }
+                .into(),
+            )
+        }
+        fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+            if self.switched.load(Ordering::SeqCst) {
+                Err(ProviderError::new(
+                    ProviderErrorKind::Network,
+                    "synthetic network failure",
+                ))
+            } else {
+                Ok(serde_json::from_value(serde_json::json!({
+                    "providerId": "claude", "plan": "SYNTHETIC",
+                    "quotas": [
+                        {"id": "weekly", "label": "Weekly", "usedPercent": 25.123456, "resetsAt": null, "periodSeconds": 604800},
+                        {"id": "monthly", "label": "Monthly", "usedPercent": 100, "resetsAt": null, "periodSeconds": 0}
+                    ],
+                    "refreshedAt": Utc::now()
+                })).unwrap())
+            }
+        }
+    }
+
+    #[test]
+    fn t874_account_switch_failure_keeps_original_identity_and_success_time() {
+        use crate::providers::identity::CacheIdentityMatch;
+        let directory = tempfile::tempdir().unwrap();
+        let switched = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let registry = Arc::new(
+            ProviderRegistry::new(vec![Arc::new(FailingAccountSwitch {
+                switched: switched.clone(),
+            })])
+            .unwrap(),
+        );
+        let storage = Arc::new(Storage::open(&directory.path().join("openquota.db")).unwrap());
+        let service = Arc::new(ProviderService::new(registry, storage.clone()));
+        let (first, failed) = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let first = service.refresh("claude", true).await;
+                switched.store(true, Ordering::SeqCst);
+                let failed = service.refresh("claude", true).await;
+                (first, failed)
+            })
+            .await
+            .expect("identity-switch case exceeded 3 seconds")
+        });
+        assert_eq!(first.cache_identity_match, CacheIdentityMatch::Matched);
+        assert_eq!(failed.cache_identity_match, CacheIdentityMatch::Mismatched);
+        assert_eq!(failed.snapshot, first.snapshot);
+        assert_eq!(failed.error_kind, Some(ProviderErrorKind::Network));
+        assert!(failed.last_attempt_at.is_some());
+        let original = first.snapshot.as_ref().unwrap();
+        assert_eq!(
+            original.account_identity.as_ref().unwrap().value,
+            "synthetic-account-a"
+        );
+        let stored = storage
+            .load_snapshot_for_identity(
+                "claude",
+                crate::providers::CacheIdentity::Resolved("synthetic-account-a"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(&stored, original);
+        let output = serde_json::json!({"first": first, "afterSwitchFailure": failed});
+        if let Some(path) = std::env::var_os("VIEW_CONTRACT_OUTPUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&output).unwrap()).unwrap();
+        }
+    }
+
     #[test]
     fn failed_refresh_preserves_last_successful_snapshot_without_forcing_stale() {
         let snapshot = ProviderSnapshot {
@@ -951,6 +1087,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let mut state = ProviderViewState {
             snapshot: Some(snapshot.clone()),
@@ -1069,6 +1207,7 @@ mod tests {
             format: crate::models::QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -1118,6 +1257,7 @@ mod tests {
             format: QuotaFormat::Count,
             used_value: Some(25.0),
             limit_value: Some(100.0),
+            remaining_value: None,
             unit: Some("searches".into()),
             estimated: false,
             source_note: None,
@@ -1131,6 +1271,10 @@ mod tests {
         });
 
         assert!(validate_snapshot(&registry, "dynamic", snapshot.clone()).is_ok());
+
+        let mut unknown_unit = snapshot.clone();
+        unknown_unit.quotas[0].unit = None;
+        assert!(validate_snapshot(&registry, "dynamic", unknown_unit).is_ok());
 
         let mut missing_unit = snapshot.clone();
         missing_unit.quotas[0].unit = Some(" ".into());
@@ -1786,6 +1930,7 @@ mod tests {
             format: crate::models::QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,

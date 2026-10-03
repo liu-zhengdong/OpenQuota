@@ -83,6 +83,7 @@ fn dollars_quota(id: &str, label: &str, used: f64, limit: f64) -> QuotaWindow {
         format: QuotaFormat::Dollars,
         used_value: Some(used),
         limit_value: Some(limit),
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,

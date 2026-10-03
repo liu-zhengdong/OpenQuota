@@ -223,7 +223,7 @@ function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): 
         : quota.usedValue;
     reading = t('metrics.countReading', {
       value: displayed.toFixed(0),
-      unit: quota.unit?.trim() || t('common.requests'),
+      unit: quota.unit?.trim() || t('common.unknownUnit'),
       direction: usageWord(settings.usageDisplay),
     });
   }

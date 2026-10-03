@@ -54,6 +54,7 @@ pub fn map_credits(response: &GrokResponse) -> Result<GrokMetrics, GrokError> {
             format: QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,

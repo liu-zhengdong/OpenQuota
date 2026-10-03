@@ -43,11 +43,14 @@ pub struct QuotaWindow {
     pub used_value: Option<f64>,
     #[serde(default)]
     pub limit_value: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Only an explicit remaining number supplied by the source; never limit minus used.
+    #[serde(default)]
+    pub remaining_value: Option<f64>,
+    #[serde(default)]
     pub unit: Option<String>,
     #[serde(default)]
     pub estimated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_note: Option<String>,
 }
 
@@ -224,6 +227,24 @@ pub enum QuotaFormat {
     Count,
 }
 
+/// Non-sensitive hash of verified account facts, not a credential fingerprint or pool ID.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountIdentity {
+    pub kind: String,
+    pub value: String,
+    pub source: String,
+}
+
+/// Requires source evidence, with explicit windows to prevent assuming account-wide sharing.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedScope {
+    pub id: String,
+    pub source: String,
+    pub window_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSnapshot {
@@ -244,6 +265,10 @@ pub struct ProviderSnapshot {
     /// never replace better data on disk.
     #[serde(default)]
     pub remembered: bool,
+    #[serde(default)]
+    pub account_identity: Option<AccountIdentity>,
+    #[serde(default)]
+    pub shared_scope: Option<SharedScope>,
 }
 
 fn deserialize_warnings<'de, D: serde::Deserializer<'de>>(
@@ -283,6 +308,9 @@ pub struct ProviderViewState {
     pub error: Option<String>,
     pub error_kind: Option<ProviderErrorKind>,
     pub last_attempt_at: Option<DateTime<Utc>>,
+    /// Computed on the returned view, never persisted with the snapshot.
+    #[serde(default)]
+    pub cache_identity_match: crate::providers::identity::CacheIdentityMatch,
 }
 
 impl Default for ProviderViewState {
@@ -295,6 +323,7 @@ impl Default for ProviderViewState {
             error: None,
             error_kind: None,
             last_attempt_at: None,
+            cache_identity_match: Default::default(),
         }
     }
 }
@@ -841,6 +870,8 @@ mod tests {
             .with_param("retrySeconds", "300")],
             refreshed_at: chrono::Utc::now(),
             remembered: true,
+            account_identity: None,
+            shared_scope: None,
         };
 
         let json = serde_json::to_value(&snapshot).unwrap();

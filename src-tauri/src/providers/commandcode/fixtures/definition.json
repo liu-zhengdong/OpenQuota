@@ -6,23 +6,6 @@
   "links": [],
   "metrics": [
     {
-      "id": "commandcode.credits",
-      "label": "Credits",
-      "source": {
-        "kind": "quota",
-        "sourceId": "credits",
-        "sessionWindow": false
-      },
-      "pinnable": true,
-      "defaultEnabled": true,
-      "defaultSection": "onDemand",
-      "defaultPinned": false,
-      "tray": {
-        "shortLabel": "C",
-        "suffix": null
-      }
-    },
-    {
       "id": "commandcode.remaining",
       "label": "Total remaining",
       "source": {

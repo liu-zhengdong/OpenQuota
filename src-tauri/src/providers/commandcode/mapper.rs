@@ -6,25 +6,6 @@ use crate::models::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-// CLI v1.74.1 normalizes separators and matches the longest plan prefix first.
-const PLANS: &[(&str, &str, f64)] = &[
-    ("individual-pro-v1", "Pro", 80.0),
-    ("individual-go-v1", "Go", 10.0),
-    ("individual-provider", "Provider", 15.0),
-    ("individual-goat", "GOAT", 70.0),
-    ("individual-pro", "Pro", 30.0),
-    ("individual-go", "Go", 10.0),
-    ("individual-max", "Max", 150.0),
-    ("individual-ultra", "Ultra", 300.0),
-    ("teams-pro", "Teams Pro", 40.0),
-];
-fn plan(id: &str) -> Option<(&'static str, f64)> {
-    let id = id.to_lowercase().replace('_', "-");
-    PLANS
-        .iter()
-        .find(|(prefix, _, _)| id.starts_with(prefix))
-        .map(|(_, name, pool)| (*name, *pool))
-}
 fn number(value: Option<&Value>) -> Option<f64> {
     value
         .and_then(Value::as_f64)
@@ -83,6 +64,7 @@ fn quota(
         format,
         used_value: Some(used),
         limit_value: Some(cap),
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,
@@ -106,48 +88,17 @@ pub fn map_usage(
         .subscription
         .get("data")
         .ok_or(CommandCodeError::InvalidResponse)?;
-    let active = matches!(
-        subscription.get("status").and_then(Value::as_str),
-        Some("active")
-    );
     let plan_id = subscription
         .get("planId")
         .and_then(Value::as_str)
         .or_else(|| credits.get("planId").and_then(Value::as_str));
-    let info = plan_id.and_then(plan);
-    let plan_name = info
-        .map(|(name, _)| name.to_owned())
-        .or_else(|| plan_id.map(str::to_owned))
-        .or_else(|| (!active).then(|| "Free".into()));
-    let spent =
-        balance_number(data.summary.get("totalCost")).ok_or(CommandCodeError::InvalidResponse)?;
+    let plan_name = plan_id.map(str::to_owned);
     let remaining = monthly + purchased + free;
-    let pool = if active {
-        info.map(|(_, pool)| pool.max(monthly) + purchased + free)
-            .unwrap_or(spent + remaining)
-    } else {
-        spent + remaining
-    };
-    if !remaining.is_finite() || !pool.is_finite() {
+    if !remaining.is_finite() {
         return Err(CommandCodeError::InvalidResponse);
     }
     let end = date(subscription.get("currentPeriodEnd"));
-    let start = date(subscription.get("currentPeriodStart"));
-    let period = start
-        .zip(end)
-        .filter(|(s, e)| e > s)
-        .map(|(s, e)| (e - s).num_seconds() as u64)
-        .unwrap_or(0);
-    let mut quotas = vec![quota(
-        "credits",
-        "Credits",
-        pool - remaining,
-        pool,
-        end,
-        period,
-        QuotaFormat::Dollars,
-    )];
-    quotas.extend(window_quotas(envelope));
+    let quotas = window_quotas(envelope);
     let statuses = renewal_status(end, now);
     Ok(ProviderSnapshot {
         provider_id: "commandcode".into(),
@@ -164,6 +115,8 @@ pub fn map_usage(
         warnings: vec![],
         refreshed_at: now,
         remembered: false,
+        account_identity: None,
+        shared_scope: None,
     })
 }
 

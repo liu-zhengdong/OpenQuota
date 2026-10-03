@@ -92,11 +92,12 @@ fn weekly_quota(body: &Value) -> Result<QuotaWindow, KimiError> {
         resets_at: iso_time(usage.get("resetTime")),
         period_seconds: WEEKLY_PERIOD_SECONDS,
         format: QuotaFormat::Percent,
-        used_value: None,
-        limit_value: None,
+        used_value: Some(used),
+        limit_value: Some(limit),
+        remaining_value: None,
         unit: None,
         estimated: false,
-        source_note: None,
+        source_note: Some("Kimi usage.limit/used; unit unverified".into()),
     })
 }
 
@@ -138,10 +139,11 @@ fn session_quota(body: &Value) -> Result<Option<QuotaWindow>, KimiError> {
         period_seconds,
         format: QuotaFormat::Percent,
         used_value: None,
-        limit_value: None,
+        limit_value: Some(limit),
+        remaining_value: Some(remaining),
         unit: None,
         estimated: false,
-        source_note: None,
+        source_note: Some("Kimi limits[].detail.limit/remaining; unit unverified".into()),
     }))
 }
 
@@ -210,12 +212,16 @@ mod tests {
         let session = &mapped.quotas[0];
         assert_eq!(session.used_percent, 20.0);
         assert_eq!(session.period_seconds, 5 * 60 * 60);
+        assert_eq!(session.used_value, None);
+        assert_eq!(session.limit_value, Some(100.0));
+        assert_eq!(session.remaining_value, Some(80.0));
+        assert_eq!(session.unit, None);
 
         let weekly = &mapped.quotas[1];
         assert_eq!(weekly.used_percent, 25.0);
         assert_eq!(weekly.format, QuotaFormat::Percent);
-        assert_eq!(weekly.used_value, None);
-        assert_eq!(weekly.limit_value, None);
+        assert_eq!(weekly.used_value, Some(25.0));
+        assert_eq!(weekly.limit_value, Some(100.0));
         assert_eq!(weekly.unit, None);
         assert_eq!(weekly.period_seconds, 7 * 24 * 60 * 60);
         assert_eq!(

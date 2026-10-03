@@ -78,7 +78,7 @@ it.each(['en', 'zh'] as const)(
     language.setPreference(locale);
     const { container } = show(snapshot);
     expect(screen.getByText('Command Code')).toBeInTheDocument();
-    expect(screen.getByText('Pro')).toBeInTheDocument();
+    expect(screen.getByText('individual-pro')).toBeInTheDocument();
     expect(screen.getByText(locale === 'zh' ? '总剩余' : 'Total remaining')).toBeInTheDocument();
     expect(screen.getByText(locale === 'zh' ? '免费额度' : 'Free credits')).toBeInTheDocument();
     expect(screen.getByText('$20.00')).toBeInTheDocument();
@@ -93,7 +93,7 @@ it.each(['en', 'zh'] as const)(
   },
 );
 it('hides absent windows without hiding total or free credits', () => {
-  show({ ...snapshot, quotas: snapshot.quotas.filter((q) => q.id === 'credits') });
+  show({ ...snapshot, quotas: [] });
   expect(screen.queryByRole('heading', { name: '5-hour' })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Weekly' })).not.toBeInTheDocument();
   expect(screen.getByText('Free credits')).toBeInTheDocument();
@@ -120,6 +120,7 @@ it('shows the CLI login description and all configurable metrics without a secon
 it('only hides metrics declared optional, preserving other providers missing-data states', () => {
   const absent = { ...snapshot, quotas: [] };
   expect(metricHasSource(catalog.metric('commandcode.fiveHour'), absent)).toBe(false);
-  expect(metricHasSource(catalog.metric('commandcode.credits'), absent)).toBe(true);
+  expect(catalog.metric('commandcode.credits')).toBeUndefined();
+  expect(metricHasSource(catalog.metric('commandcode.remaining'), absent)).toBe(true);
   expect(metricHasSource(catalog.metric('commandcode.weekly'), snapshot)).toBe(true);
 });

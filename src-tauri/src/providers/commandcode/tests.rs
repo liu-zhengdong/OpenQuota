@@ -19,12 +19,10 @@ use std::{
 };
 const CREDITS: &str = include_str!("fixtures/credits.json");
 const SUBSCRIPTION: &str = include_str!("fixtures/subscription.json");
-const SUMMARY: &str = include_str!("fixtures/summary.json");
 fn fixture() -> UsageData {
     UsageData {
         credits: serde_json::from_str(CREDITS).unwrap(),
         subscription: serde_json::from_str(SUBSCRIPTION).unwrap(),
-        summary: serde_json::from_str(SUMMARY).unwrap(),
     }
 }
 fn now() -> chrono::DateTime<Utc> {
@@ -34,7 +32,7 @@ fn now() -> chrono::DateTime<Utc> {
 #[test]
 fn subscription_remaining_free_and_windows_are_independent() {
     let snapshot = map_usage(&fixture(), now()).unwrap();
-    assert_eq!(snapshot.plan.as_deref(), Some("Pro"));
+    assert_eq!(snapshot.plan.as_deref(), Some("individual-pro"));
     assert_eq!(
         snapshot
             .value_metrics
@@ -43,12 +41,12 @@ fn subscription_remaining_free_and_windows_are_independent() {
             .collect::<Vec<_>>(),
         [20.0, 5.0, 12.0, 3.0]
     );
-    assert_eq!(snapshot.quotas[0].limit_value, Some(38.0));
-    assert_eq!(snapshot.quotas[0].used_value, Some(18.0));
-    assert_eq!(snapshot.quotas[1].used_percent, 20.0);
-    assert_eq!(snapshot.quotas[2].used_percent, 40.0);
+    assert_eq!(snapshot.quotas.len(), 2);
+    assert!(snapshot.quotas.iter().all(|q| q.id != "credits"));
+    assert_eq!(snapshot.quotas[0].used_percent, 20.0);
+    assert_eq!(snapshot.quotas[1].used_percent, 40.0);
     assert_eq!(
-        snapshot.quotas[1].resets_at.unwrap().timestamp_millis(),
+        snapshot.quotas[0].resets_at.unwrap().timestamp_millis(),
         1791018000000
     );
     assert_eq!(snapshot.status_metrics[0].text, "29");
@@ -58,81 +56,24 @@ fn free_account_zero_balance_and_unknown_windows_do_not_invent_data() {
     let mut data = fixture();
     data.subscription = json!({"data":null});
     data.credits = json!({"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":2},"windowLimits":{"unknown":true}});
-    data.summary = json!({"totalCost":3});
     let snapshot = map_usage(&data, now()).unwrap();
-    assert_eq!(snapshot.plan.as_deref(), Some("Free"));
-    assert_eq!(snapshot.quotas.len(), 1);
-    assert_eq!(snapshot.quotas[0].used_percent, 60.0);
+    assert_eq!(snapshot.plan, None);
+    assert!(snapshot.quotas.is_empty());
     assert!(snapshot.status_metrics.is_empty());
     data.credits["credits"]["freeCredits"] = json!(0);
-    data.summary["totalCost"] = json!(0);
-    assert_eq!(map_usage(&data, now()).unwrap().quotas[0].used_percent, 0.0);
+    assert_eq!(
+        map_usage(&data, now()).unwrap().value_metrics[1].values[0].number,
+        0.0
+    );
 }
 #[test]
-fn malformed_credit_and_summary_fields_are_rejected() {
+fn malformed_credit_fields_are_rejected() {
     for value in [Value::Null, json!("12"), json!({})] {
         let mut data = fixture();
         data.credits["credits"]["freeCredits"] = value;
         assert!(map_usage(&data, now()).is_err());
     }
-    let mut data = fixture();
-    data.summary = json!({});
-    assert!(map_usage(&data, now()).is_err());
 }
-#[test]
-fn all_plan_prefixes_use_the_active_monthly_pool() {
-    for (id, name, pool) in [
-        ("individual-go", "Go", 10.0_f64),
-        ("individual-go-v1", "Go", 10.0),
-        ("individual-goat", "GOAT", 70.0),
-        ("individual-pro", "Pro", 30.0),
-        ("individual-pro-v1", "Pro", 80.0),
-        ("individual-provider", "Provider", 15.0),
-        ("individual-max", "Max", 150.0),
-        ("individual-ultra", "Ultra", 300.0),
-        ("teams-pro", "Teams Pro", 40.0),
-    ] {
-        let mut data = fixture();
-        data.subscription["data"]["planId"] =
-            json!(format!("{}-monthly", id.to_uppercase().replace('-', "_")));
-        data.subscription["data"]["status"] = json!("active");
-        let snapshot = map_usage(&data, now()).unwrap();
-        assert_eq!(snapshot.plan.as_deref(), Some(name));
-        assert_eq!(snapshot.quotas[0].limit_value, Some(pool.max(12.0) + 8.0));
-    }
-}
-#[test]
-fn non_active_and_unknown_subscriptions_do_not_inflate_the_pool() {
-    for status in [
-        json!("trialing"),
-        json!("past_due"),
-        json!("canceled"),
-        json!("unknown"),
-        Value::Null,
-    ] {
-        let mut data = fixture();
-        data.subscription["data"]["status"] = status;
-        data.summary["totalCost"] = json!(7);
-        let snapshot = map_usage(&data, now()).unwrap();
-        assert_eq!(snapshot.quotas[0].limit_value, Some(27.0));
-        assert_eq!(snapshot.quotas[0].used_value, Some(7.0));
-        // Zero remaining must stay exhausted, even when a known plan has a monthly allowance.
-        for id in ["monthlyCredits", "purchasedCredits", "freeCredits"] {
-            data.credits["credits"][id] = json!(0);
-        }
-        let exhausted = map_usage(&data, now()).unwrap();
-        assert_eq!(exhausted.quotas[0].used_percent, 100.0);
-        assert_eq!(exhausted.value_metrics[0].values[0].number, 0.0);
-    }
-    let mut data = fixture();
-    data.subscription["data"]["planId"] = json!("unknown-plan");
-    data.summary["totalCost"] = json!(7);
-    assert_eq!(
-        map_usage(&data, now()).unwrap().quotas[0].limit_value,
-        Some(27.0)
-    );
-}
-
 #[test]
 fn renewal_urgency_and_bad_windows() {
     for (end, days, tone) in [
@@ -149,7 +90,7 @@ fn renewal_urgency_and_bad_windows() {
     let mut data = fixture();
     data.credits["windowLimits"]["fiveHour"]["cap"] = json!(0);
     data.credits["windowLimits"]["weekly"]["used"] = json!(null);
-    assert_eq!(map_usage(&data, now()).unwrap().quotas.len(), 1);
+    assert!(map_usage(&data, now()).unwrap().quotas.is_empty());
 }
 #[test]
 fn unset_window_reset_does_not_become_the_unix_epoch() {
@@ -157,9 +98,9 @@ fn unset_window_reset_does_not_become_the_unix_epoch() {
     data.credits["windowLimits"]["fiveHour"]["resetAt"] = json!(0);
     data.credits["windowLimits"]["weekly"]["resetAt"] = json!(-1);
     let snapshot = map_usage(&data, now()).unwrap();
-    assert_eq!(snapshot.quotas.len(), 3);
+    assert_eq!(snapshot.quotas.len(), 2);
+    assert!(snapshot.quotas[0].resets_at.is_none());
     assert!(snapshot.quotas[1].resets_at.is_none());
-    assert!(snapshot.quotas[2].resets_at.is_none());
 }
 
 #[test]
@@ -194,7 +135,7 @@ fn authentication_rate_limit_network_and_invalid_json_are_safe() {
     assert!(client.fetch("fake-test-secret").is_err());
 }
 #[test]
-fn mock_server_checks_routes_bearer_org_and_period_start() {
+fn mock_server_checks_routes_bearer_and_org() {
     check_routes(true);
 }
 #[test]
@@ -219,7 +160,7 @@ fn check_routes(has_org: bool) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let captured = requests.clone();
     let server = thread::spawn(move || {
-        for _ in 0..4 {
+        for _ in 0..3 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut buf = [0; 8192];
             let n = stream.read(&mut buf).unwrap();
@@ -235,7 +176,7 @@ fn check_routes(has_org: bool) {
             } else if request.contains("/alpha/billing/subscriptions?") {
                 SUBSCRIPTION
             } else {
-                SUMMARY
+                panic!("unexpected endpoint: {request}")
             };
             captured.lock().unwrap().push(request);
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
@@ -247,7 +188,7 @@ fn check_routes(has_org: bool) {
         .unwrap();
     assert_eq!(
         map_usage(&data, now()).unwrap().plan.as_deref(),
-        Some("Pro")
+        Some("individual-pro")
     );
     server.join().unwrap();
     let requests = requests.lock().unwrap();
@@ -263,7 +204,7 @@ fn check_routes(has_org: bool) {
             assert!(!request.contains("orgId="));
         }
     }
-    assert!(requests[3].contains("since=2026-10-01T00%3A00%3A00Z"));
+    assert_eq!(requests.len(), 3);
 }
 #[test]
 fn unconfigured_provider_is_registered_without_own_credential_storage() {
@@ -384,7 +325,6 @@ fn negative_balances_follow_the_cli_zero_floor() {
     let mut data = fixture();
     data.credits["credits"]["monthlyCredits"] = json!(-1);
     data.credits["credits"]["freeCredits"] = json!(-2);
-    data.summary["totalCost"] = json!(-5);
     let snapshot = map_usage(&data, now()).unwrap();
     assert_eq!(snapshot.value_metrics[0].values[0].number, 3.0);
     assert_eq!(snapshot.value_metrics[1].values[0].number, 0.0);

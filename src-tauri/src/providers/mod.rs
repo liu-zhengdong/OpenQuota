@@ -1,5 +1,8 @@
 pub mod antigravity;
 pub mod api_key;
+pub mod cache;
+#[cfg(test)]
+mod cache_tests;
 pub mod claude;
 pub mod codex;
 pub mod commandcode;
@@ -9,6 +12,7 @@ pub mod cursor;
 mod detection;
 pub mod devin;
 pub mod grok;
+pub mod identity;
 pub mod kimi;
 
 pub mod minimax;
@@ -137,6 +141,11 @@ pub trait UsageProvider: Send + Sync {
 
     fn supports_api_key_configuration(&self) -> bool {
         false
+    }
+
+    /// Resolve current account facts when exporting a view; never persist a second identity state.
+    fn current_account_identity(&self) -> Option<String> {
+        self.cache_identity().resolved_value().map(str::to_owned)
     }
 
     fn account_identity(&self) -> Option<&str> {
