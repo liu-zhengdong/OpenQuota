@@ -7,6 +7,12 @@ fn main() {
     use objc2::{MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior as Behavior};
 
+    // Nextest discovers harness-free binaries with --list. Report an empty
+    // suite without touching AppKit; the standalone CI step runs the real test.
+    if std::env::args().any(|arg| arg == "--list") {
+        return;
+    }
+
     let mtm = MainThreadMarker::new().expect("AppKit test must run on the main thread");
     // SAFETY: allocation and initialization occur on the process main thread.
     // Never order the window front or activate the application.
@@ -29,10 +35,6 @@ fn main() {
     space_behavior::allow_fullscreen_spaces(&window);
     assert_eq!(window.collectionBehavior(), behavior);
     assert!(!window.isVisible());
-    // No stdout output: with harness = false, `cargo nextest run --all-targets`
-    // parses this binary's `--list` output and rejects lines that do not end
-    // in ": test" or ": benchmark". The real run happens via
-    // `cargo test --test space_behavior` (see ci.yml).
 }
 
 #[cfg(not(target_os = "macos"))]
