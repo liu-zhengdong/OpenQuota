@@ -19,6 +19,8 @@ mod quota_tier;
 mod refresh_loop;
 mod service;
 mod settings;
+#[cfg(target_os = "macos")]
+mod space_behavior;
 mod storage;
 #[cfg(any(not(target_os = "macos"), test))]
 mod tray_icon;
@@ -470,6 +472,15 @@ pub fn run() {
             app.manage(Arc::new(CodexResetClaimService::new()?));
 
             if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                #[cfg(target_os = "macos")]
+                {
+                    let native_window = window.ns_window()?;
+                    // SAFETY: setup runs on the main thread; Tauri owns this live NSWindow
+                    // and keeps it alive for the duration of the borrowed reference.
+                    let native_window =
+                        unsafe { &*native_window.cast::<objc2_app_kit::NSWindow>() };
+                    space_behavior::allow_fullscreen_spaces(native_window);
+                }
                 if window::apply_panel_surface(&window, settings.get().theme).is_err() {
                     app_warn!("window", "initial panel surface theme could not be applied");
                 }
