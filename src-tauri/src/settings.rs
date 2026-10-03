@@ -11,8 +11,8 @@ use serde_json::{Map, Value};
 use crate::{
     hashing::sha256_hex,
     models::{
-        AppSettings, MetricDefinition, MetricLayout, MetricSection, ProviderCatalog,
-        ProviderDefinition, ProviderLayout, SettingsViewState,
+        AppSettings, MenuBarStyle, MetricDefinition, MetricLayout, MetricSection, ProviderCatalog,
+        ProviderDefinition, ProviderLayout, SettingsViewState, SETTINGS_SCHEMA_VERSION,
     },
     providers::{CredentialProbeResults, CredentialProbeStatus, ProviderRegistry},
     storage::{ProviderAccountUpdate, Storage, StorageError},
@@ -714,7 +714,12 @@ fn normalize_with_persisted_accounts(
 ) {
     let catalog = registry.catalog();
     let migrating_to_multi_provider = settings.schema_version < 3;
-    settings.schema_version = 7;
+    // Text was the default before version 8 and nothing records whether it was chosen, so every
+    // saved Text moves to the new default once; choosing Text again afterwards sticks.
+    if settings.schema_version < 8 && settings.menu_bar_style == MenuBarStyle::Text {
+        settings.menu_bar_style = MenuBarStyle::Compact;
+    }
+    settings.schema_version = SETTINGS_SCHEMA_VERSION;
     settings.dismissed_update_version = settings
         .dismissed_update_version
         .take()
@@ -978,7 +983,9 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::{
-        models::{MetricSection, ProviderDefinition, ProviderSnapshot, ThemePreference},
+        models::{
+            MenuBarStyle, MetricSection, ProviderDefinition, ProviderSnapshot, ThemePreference,
+        },
         providers::{
             antigravity, claude, codex, cursor, openrouter, CredentialProbeResults,
             CredentialProbeStatus, ProviderError, ProviderRegistry, UsageProvider,
@@ -2038,7 +2045,7 @@ mod tests {
             &mut settings,
             &HashSet::from(["codex".to_owned(), "antigravity".to_owned()]),
         );
-        assert_eq!(settings.schema_version, 7);
+        assert_eq!(settings.schema_version, 8);
         assert_eq!(
             settings
                 .providers
@@ -2047,6 +2054,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["claude", "codex", "cursor", "antigravity", "openrouter"]
         );
+    }
+
+    #[test]
+    fn saved_text_menu_bar_moves_to_compact_once_and_later_choices_stick() {
+        let catalog = catalog();
+        let detected = HashSet::from(["codex".to_owned()]);
+        let saved = |schema_version, menu_bar_style| {
+            let mut settings = default_settings(&catalog, &detected);
+            settings.schema_version = schema_version;
+            settings.menu_bar_style = menu_bar_style;
+            normalize(&catalog, &mut settings, &detected);
+            settings
+        };
+
+        let migrated = saved(7, MenuBarStyle::Text);
+        assert_eq!(migrated.menu_bar_style, MenuBarStyle::Compact);
+        assert_eq!(migrated.schema_version, 8);
+        assert_eq!(
+            saved(7, MenuBarStyle::Bars).menu_bar_style,
+            MenuBarStyle::Bars
+        );
+        assert_eq!(
+            saved(8, MenuBarStyle::Text).menu_bar_style,
+            MenuBarStyle::Text
+        );
+
+        let mut chosen_again = migrated;
+        chosen_again.menu_bar_style = MenuBarStyle::Text;
+        normalize(&catalog, &mut chosen_again, &detected);
+        assert_eq!(chosen_again.menu_bar_style, MenuBarStyle::Text);
     }
 
     #[test]

@@ -735,6 +735,9 @@ pub struct NotificationPreferences {
     pub will_run_out: bool,
 }
 
+/// Version 8 moved the macOS menu bar default from `Text` to `Compact`.
+pub const SETTINGS_SCHEMA_VERSION: u32 = 8;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
@@ -766,7 +769,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            schema_version: 7,
+            schema_version: SETTINGS_SCHEMA_VERSION,
             providers: Vec::new(),
             known_provider_ids: Vec::new(),
             provider_names: BTreeMap::new(),
@@ -774,7 +777,7 @@ impl Default for AppSettings {
             density: DensityPreference::Default,
             reduce_animations: false,
             window_mode: WindowMode::Popup,
-            menu_bar_style: MenuBarStyle::Text,
+            menu_bar_style: MenuBarStyle::Compact,
             usage_display: UsageDisplay::Left,
             reset_display: ResetDisplay::Countdown,
             time_format: TimeFormatPreference::System,
@@ -924,20 +927,20 @@ mod tests {
     }
 
     #[test]
-    fn compact_menu_bar_style_round_trips_and_older_settings_keep_text() {
+    fn menu_bar_style_round_trips_and_defaults_to_compact() {
         let value = serde_json::to_value(AppSettings {
-            menu_bar_style: MenuBarStyle::Compact,
+            menu_bar_style: MenuBarStyle::Text,
             ..AppSettings::default()
         })
         .unwrap();
-        assert_eq!(value["menuBarStyle"], "compact");
+        assert_eq!(value["menuBarStyle"], "text");
         let settings: AppSettings = serde_json::from_value(value).unwrap();
-        assert_eq!(settings.menu_bar_style, MenuBarStyle::Compact);
+        assert_eq!(settings.menu_bar_style, MenuBarStyle::Text);
 
         let mut value = serde_json::to_value(AppSettings::default()).unwrap();
         value.as_object_mut().unwrap().remove("menuBarStyle");
         let settings: AppSettings = serde_json::from_value(value).unwrap();
-        assert_eq!(settings.menu_bar_style, MenuBarStyle::Text);
+        assert_eq!(settings.menu_bar_style, MenuBarStyle::Compact);
     }
 
     #[test]

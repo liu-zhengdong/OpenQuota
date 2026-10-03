@@ -12,6 +12,9 @@ const ICON_SIZE: u32 = 36;
 const ICON_POINTS: f32 = 18.0;
 const ICON_SCALE: f32 = ICON_SIZE as f32 / ICON_POINTS;
 pub const MAX_BARS: usize = 4;
+/// Keeps the default style at most four marks wide however many providers are enabled; the
+/// popup panel lists every provider.
+const MAX_COMPACT_MARKS: usize = 4;
 
 const TEXT_HEIGHT: u32 = 36;
 const OUTER_PADDING: f32 = 2.0;
@@ -155,7 +158,18 @@ fn render_text_strip(groups: &[TextGroup]) -> Option<RenderedStrip> {
     })
 }
 
+/// The marks to draw: all of them up to the cap, otherwise the tightest ones (red, then orange,
+/// then green, then gray; ties keep panel order), still drawn in panel order.
+fn compact_marks(groups: &[CompactGroup]) -> Vec<&CompactGroup> {
+    let mut by_urgency = groups.iter().enumerate().collect::<Vec<_>>();
+    by_urgency.sort_by_key(|(index, group)| (group.tier.is_none(), group.tier, *index));
+    by_urgency.truncate(MAX_COMPACT_MARKS);
+    by_urgency.sort_by_key(|(index, _)| *index);
+    by_urgency.into_iter().map(|(_, group)| group).collect()
+}
+
 fn render_compact_strip(groups: &[CompactGroup]) -> Option<RenderedStrip> {
+    let groups = compact_marks(groups);
     if groups.is_empty() {
         return None;
     }
@@ -638,11 +652,11 @@ mod preview;
 #[cfg(test)]
 mod tests {
     use super::{
-        bar_fill, bar_icon, compact_icon, parse_svg_path, provider_path, render_bar_rgba,
-        render_compact_strip, render_text_strip, text_icon, visual_bar_fraction, CompactGroup,
-        TextGroup, COMPACT_CAUTION_COLOR, COMPACT_CRITICAL_COLOR, COMPACT_GAP,
-        COMPACT_HEALTHY_COLOR, COMPACT_UNBOUNDED_COLOR, ICON_SIZE, MAX_BARS, OUTER_PADDING,
-        PROVIDER_ICON_SIZE, TEXT_HEIGHT,
+        bar_fill, bar_icon, compact_icon, compact_marks, parse_svg_path, provider_path,
+        render_bar_rgba, render_compact_strip, render_text_strip, text_icon, visual_bar_fraction,
+        CompactGroup, TextGroup, COMPACT_CAUTION_COLOR, COMPACT_CRITICAL_COLOR, COMPACT_GAP,
+        COMPACT_HEALTHY_COLOR, COMPACT_UNBOUNDED_COLOR, ICON_SIZE, MAX_BARS, MAX_COMPACT_MARKS,
+        OUTER_PADDING, PROVIDER_ICON_SIZE, TEXT_HEIGHT,
     };
     use crate::quota_tier::QuotaTier;
 
@@ -703,11 +717,12 @@ mod tests {
     }
 
     #[test]
-    fn compact_strip_grows_with_providers_and_is_empty_without_them() {
+    fn compact_strip_width_is_bounded_at_four_marks_and_empty_without_providers() {
         assert!(render_compact_strip(&[]).is_none());
         assert!(compact_icon(&[]).is_none());
 
-        let widths = (1..=4)
+        // @2x pixels: 18pt for one provider, never wider than 81pt.
+        let widths = (1..=13)
             .map(|count| {
                 let groups = vec![compact_group("codex", Some(QuotaTier::Healthy)); count];
                 let icon = compact_icon(&groups).expect("providers should render a strip");
@@ -716,8 +731,35 @@ mod tests {
                 icon.width()
             })
             .collect::<Vec<_>>();
-        assert!(widths.windows(2).all(|pair| pair[1] > pair[0]));
-        assert_eq!(widths[0], TEXT_HEIGHT);
+        assert_eq!(widths[..4], [36, 78, 120, 162]);
+        assert!(widths[4..].iter().all(|width| *width == 162));
+        assert_eq!(MAX_COMPACT_MARKS, 4);
+    }
+
+    #[test]
+    fn compact_overflow_keeps_the_tightest_marks_in_panel_order() {
+        let groups = [
+            compact_group("claude", Some(QuotaTier::Healthy)),
+            compact_group("openrouter", None),
+            compact_group("codex", Some(QuotaTier::Critical)),
+            compact_group("copilot", Some(QuotaTier::Healthy)),
+            compact_group("cursor", Some(QuotaTier::Caution)),
+            compact_group("zai", Some(QuotaTier::Healthy)),
+        ];
+        let ids = |marks: Vec<&CompactGroup>| {
+            marks
+                .into_iter()
+                .map(|mark| mark.provider_id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(compact_marks(&groups)),
+            ["claude", "codex", "copilot", "cursor"]
+        );
+        assert_eq!(
+            ids(compact_marks(&groups[..3])),
+            ["claude", "openrouter", "codex"]
+        );
     }
 
     #[test]
