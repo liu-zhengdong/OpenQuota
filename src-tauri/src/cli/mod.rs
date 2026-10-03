@@ -1011,6 +1011,45 @@ mod tests {
     }
 
     #[test]
+    fn timed_absolute_quotas_preserve_existing_pace_summary() {
+        for format in [QuotaFormat::Count, QuotaFormat::Dollars] {
+            let quotas = vec![
+                QuotaWindow {
+                    format,
+                    ..window(
+                        "session",
+                        "Session",
+                        18_000,
+                        99.6,
+                        Some(now() + Duration::hours(2)),
+                    )
+                },
+                QuotaWindow {
+                    format,
+                    ..window(
+                        "weekly",
+                        "Weekly",
+                        604_800,
+                        23.456,
+                        Some(now() + Duration::days(2)),
+                    )
+                },
+            ];
+            let row = build_row(
+                snapshot("zai", quotas),
+                now(),
+                super::RefreshOutcome::NotRequested,
+            );
+            assert_eq!(row.window_id.as_deref(), Some("weekly"));
+            assert_eq!(row.used_percent, Some(23.456));
+            assert_eq!(row.short_window_id.as_deref(), Some("session"));
+            assert_eq!(row.short_window_used_percent, Some(99.6));
+            assert!(row.spare_percent.is_some());
+            assert!(row.hours_to_reset.is_some());
+        }
+    }
+
+    #[test]
     fn short_window_prefers_session_then_five_hour_periods() {
         let resets_at = now() + Duration::hours(2);
         let quotas = vec![

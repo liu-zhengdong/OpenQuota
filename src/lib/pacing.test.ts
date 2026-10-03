@@ -31,6 +31,19 @@ function quota(
 }
 
 describe('quota pacing', () => {
+  it('does not confuse rounded percentages or cents with exhaustion', () => {
+    for (const format of ['count', 'dollars', 'percent'] as const) {
+      expect(projectPace(quota(99.6, 0.5, { format, remainingValue: 0.4 }), now).severity).not.toBe(
+        'spent',
+      );
+      expect(
+        projectPace(quota(99.6, 0.5, { format, remainingValue: null }), now).severity,
+      ).not.toBe('spent');
+      expect(projectPace(quota(99.6, 0.5, { format, remainingValue: 0 }), now).severity).toBe(
+        'spent',
+      );
+    }
+  });
   it('distinguishes healthy, close, and running-out projections', () => {
     const healthy = projectPace(quota(30, 0.5), now);
     const close = projectPace(quota(46, 0.5), now);
@@ -78,20 +91,22 @@ describe('quota pacing', () => {
     expect(paceTooltip(roundedToZero)).toBe('~100% used at reset');
   });
 
-  it('uses the displayed precision to decide when the limit is reached', () => {
+  it('uses unrounded source facts to decide when the limit is reached', () => {
     expect(projectPace(quota(99.5, 0.5, { resetsAt: null }), now).severity).toBe('level');
-    expect(projectPace(quota(99.51, 0.5, { resetsAt: null }), now).severity).toBe('spent');
+    expect(projectPace(quota(99.51, 0.5, { resetsAt: null }), now).severity).toBe('level');
+    expect(projectPace(quota(100, 0.5, { resetsAt: null }), now).severity).toBe('spent');
     expect(
       projectPace(
         quota(99, 0.5, {
           format: 'dollars',
           usedValue: 9.996,
           limitValue: 10,
+          remainingValue: 0.004,
           resetsAt: null,
         }),
         now,
       ).severity,
-    ).toBe('spent');
+    ).toBe('level');
   });
 
   it('supports countdown and exact reset modes', () => {
@@ -125,6 +140,15 @@ describe('quota pacing', () => {
     expect(dayPeriod).toBeTruthy();
     expect(twelveHour).toContain(dayPeriod);
     expect(twentyFourHour).not.toContain(dayPeriod);
+  });
+
+  it('compares timed absolute quotas independently of their display format', () => {
+    for (const format of ['count', 'dollars'] as const) {
+      const session = quota(99.6, 0.5, { id: 'session', format });
+      const weekly = quota(23.456, 0.5, { id: 'weekly', format, periodSeconds: 604_800 });
+      expect(selectComparisonWindow([session, weekly])).toBe(weekly);
+      expect(sparePercent(weekly, now)).not.toBeNull();
+    }
   });
 
   it('compares a provider against its weekly window when it has one', () => {

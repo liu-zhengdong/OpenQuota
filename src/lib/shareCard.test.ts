@@ -110,6 +110,7 @@ describe('share card layout', () => {
       usedPercent: 25,
       usedValue: 25,
       limitValue: 100,
+      remainingValue: 75,
       unit: 'searches',
     };
 
@@ -130,6 +131,7 @@ describe('share card layout', () => {
       format: 'count',
       usedValue: 25,
       limitValue: 100,
+      remainingValue: 75,
       unit: null,
     });
     const rows = buildProviderShareRows(
@@ -141,6 +143,31 @@ describe('share card layout', () => {
     );
     expect(rows[0]).toMatchObject({ kind: 'quota', reading: '75 (unit unknown) left' });
   });
+
+  it.each([50, 0, 0.4, 0.123456789, null])(
+    'shares only source remaining (%s)',
+    (remainingValue) => {
+      const snapshot = structuredClone(codexState.snapshot!);
+      Object.assign(snapshot.quotas[0], {
+        format: 'count',
+        usedPercent: 40,
+        usedValue: 40,
+        limitValue: 100,
+        remainingValue,
+        unit: 'credits',
+      });
+      const rows = buildProviderShareRows(
+        'codex',
+        snapshot,
+        settingsState.settings.providers[0],
+        settingsState.settings,
+        Date.now(),
+      );
+      expect(rows[0]).toMatchObject({
+        reading: remainingValue === null ? '60% left' : `${remainingValue} credits left`,
+      });
+    },
+  );
 
   it('omits pacing copy for an unused non-session quota', () => {
     const now = Date.parse('2026-08-12T12:00:00Z');

@@ -135,7 +135,7 @@ pub(super) fn sort_rows(rows: &mut [PaceRow]) {
 }
 
 pub(super) fn comparison_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
+    let percent = comparable_windows(quotas).collect::<Vec<_>>();
     let weekly = percent
         .iter()
         .copied()
@@ -148,7 +148,7 @@ pub(super) fn comparison_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> 
 }
 
 pub(super) fn short_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
+    let percent = comparable_windows(quotas).collect::<Vec<_>>();
     if let Some(session) = percent
         .iter()
         .copied()
@@ -171,10 +171,12 @@ pub(super) fn short_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
         })
 }
 
-pub(super) fn percent_windows(quotas: &[QuotaWindow]) -> impl Iterator<Item = &QuotaWindow> {
+fn comparable_windows(quotas: &[QuotaWindow]) -> impl Iterator<Item = &QuotaWindow> {
+    // Format controls presentation, not comparability. Retain legacy percent
+    // windows, and include timed absolute quotas with a measured used_percent.
     quotas
         .iter()
-        .filter(|window| window.format == QuotaFormat::Percent)
+        .filter(|window| window.format == QuotaFormat::Percent || window.period_seconds > 0)
 }
 
 pub(super) fn matches_name(window: &QuotaWindow, needle: &str) -> bool {

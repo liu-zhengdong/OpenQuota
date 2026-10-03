@@ -1,5 +1,6 @@
 import { t, windowLabel } from './i18n';
-import { metricLabel, usageWord } from './i18n/labels';
+import { metricLabel } from './i18n/labels';
+import { quotaFillPercent, quotaReading } from './quotaReading';
 import { noticeMessage, noticeTitle } from './i18n/providerMessages';
 import type { ProviderCatalogIndex } from './metrics';
 import { formatMetricValue } from './metricFormat';
@@ -210,36 +211,8 @@ export function renderProviderShareCard(
 
 function quotaShareRow(quota: QuotaWindow, settings: AppSettings, now: number): ShareRow {
   const used = clamp(quota.usedPercent, 0, 100);
-  const remaining = Math.max(0, 100 - used);
-  let reading = t('metrics.percentReading', {
-    percent: (settings.usageDisplay === 'used' ? used : remaining).toFixed(0),
-    direction: usageWord(settings.usageDisplay),
-  });
-  let fillPercent = settings.usageDisplay === 'used' ? used : remaining;
-  if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
-    const displayed =
-      settings.usageDisplay === 'left'
-        ? Math.max(0, quota.limitValue - quota.usedValue)
-        : quota.usedValue;
-    reading = t('metrics.countReading', {
-      value: displayed.toFixed(0),
-      unit: quota.unit?.trim() || t('common.unknownUnit'),
-      direction: usageWord(settings.usageDisplay),
-    });
-  }
-  if (quota.format === 'dollars' && quota.usedValue !== null) {
-    const displayed =
-      settings.usageDisplay === 'left' && quota.limitValue !== null
-        ? Math.max(0, quota.limitValue - quota.usedValue)
-        : quota.usedValue;
-    reading =
-      settings.usageDisplay === 'left'
-        ? t('metrics.dollarsLeft', { value: displayed.toFixed(2) })
-        : t('metrics.dollarsSpent', { value: displayed.toFixed(2) });
-    if (quota.limitValue !== null && quota.limitValue > 0) {
-      fillPercent = (displayed / quota.limitValue) * 100;
-    }
-  }
+  const reading = quotaReading(quota, settings.usageDisplay);
+  const fillPercent = quotaFillPercent(quota, settings.usageDisplay);
 
   const pace = projectPace(quota, now);
   const severity =

@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import { t, windowLabel } from './i18n';
-  import { usageWord } from './i18n/labels';
+  import { quotaFillPercent, quotaReading } from './quotaReading';
   import {
     formatLimit,
     formatReset,
@@ -35,72 +35,13 @@
     onToggleReset,
   }: Props = $props();
   const used = $derived(Math.min(100, Math.max(0, quota.usedPercent)));
-  const remaining = $derived(Math.max(0, 100 - used));
-  const countUnit = $derived(quota.unit?.trim() || t('common.unknownUnit'));
   const title = $derived(windowLabel(quota.id, quota.label));
   const estimateNote = $derived(quota.sourceNote?.trim() || t('metrics.estimatedNote'));
-  const reading = $derived.by(() => {
-    if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
-      const value =
-        usageDisplay === 'left' ? Math.max(0, quota.limitValue - quota.usedValue) : quota.usedValue;
-      return t('metrics.countReading', {
-        value: value.toFixed(0),
-        unit: countUnit,
-        direction: usageWord(usageDisplay),
-      });
-    }
-    if (quota.format === 'dollars' && quota.usedValue !== null) {
-      if (usageDisplay === 'left' && quota.limitValue !== null) {
-        return t('metrics.dollarsLeft', {
-          value: Math.max(0, quota.limitValue - quota.usedValue).toFixed(2),
-        });
-      }
-      return t('metrics.dollarsSpent', { value: quota.usedValue.toFixed(2) });
-    }
-    return t('metrics.percentReading', {
-      percent: (usageDisplay === 'used' ? used : remaining).toFixed(0),
-      direction: usageWord(usageDisplay),
-    });
-  });
-  const readingTooltip = $derived.by(() => {
-    if (quota.format === 'count' && quota.usedValue !== null && quota.limitValue !== null) {
-      const opposite =
-        usageDisplay === 'left' ? quota.usedValue : Math.max(0, quota.limitValue - quota.usedValue);
-      return t('metrics.countReading', {
-        value: opposite.toFixed(0),
-        unit: countUnit,
-        direction: usageWord(usageDisplay === 'left' ? 'used' : 'left'),
-      });
-    }
-    if (quota.format === 'dollars' && quota.usedValue !== null) {
-      if (usageDisplay === 'left')
-        return t('metrics.dollarsSpent', { value: quota.usedValue.toFixed(2) });
-      if (quota.limitValue !== null)
-        return t('metrics.dollarsLeft', {
-          value: Math.max(0, quota.limitValue - quota.usedValue).toFixed(2),
-        });
-      return null;
-    }
-    return usageDisplay === 'left'
-      ? t('metrics.percentUsed', { percent: used.toFixed(0) })
-      : t('metrics.percentLeft', { percent: remaining.toFixed(0) });
-  });
-  const fillPercent = $derived.by(() => {
-    if (
-      quota.format === 'dollars' &&
-      quota.usedValue !== null &&
-      quota.limitValue !== null &&
-      quota.limitValue > 0
-    ) {
-      const displayed =
-        usageDisplay === 'left' ? Math.max(0, quota.limitValue - quota.usedValue) : quota.usedValue;
-      return Math.min(
-        100,
-        Math.max(0, ((Math.round(displayed * 100) / 100) * 100) / quota.limitValue),
-      );
-    }
-    return Math.min(100, Math.max(0, Math.round(usageDisplay === 'used' ? used : remaining)));
-  });
+  const reading = $derived(quotaReading(quota, usageDisplay));
+  const readingTooltip = $derived(
+    quotaReading(quota, usageDisplay === 'left' ? 'used' : 'left', true),
+  );
+  const fillPercent = $derived(quotaFillPercent(quota, usageDisplay));
   const freshSession = $derived(isFreshSessionWindow(quota, now, isSessionWindow));
   const pace = $derived(projectPace(quota, now));
   const paceDetail = $derived(paceTooltip(pace));

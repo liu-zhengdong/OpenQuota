@@ -7,22 +7,6 @@ use super::ZaiError;
 
 pub const MONTHLY_PERIOD_SECONDS: u64 = 30 * 24 * 60 * 60;
 
-#[derive(Debug, PartialEq)]
-pub struct ZaiMappedUsage {
-    pub plan: Option<String>,
-    pub quotas: Vec<QuotaWindow>,
-}
-
-pub fn map_usage(
-    quota_body: &Value,
-    subscription_body: Option<&Value>,
-) -> Result<ZaiMappedUsage, ZaiError> {
-    Ok(ZaiMappedUsage {
-        plan: subscription_body.and_then(plan_name),
-        quotas: map_quota(quota_body)?,
-    })
-}
-
 pub fn is_no_coding_plan(body: &Value) -> bool {
     body.get("success").and_then(Value::as_bool) == Some(false)
         && body
@@ -32,6 +16,7 @@ pub fn is_no_coding_plan(body: &Value) -> bool {
 }
 
 pub fn plan_name(body: &Value) -> Option<String> {
+    successful_envelope(body).ok()?;
     body.get("data")
         .and_then(Value::as_array)?
         .first()?
@@ -42,7 +27,22 @@ pub fn plan_name(body: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+// Older bare payloads have no envelope. An explicit failure is never an empty success.
+fn successful_envelope(body: &Value) -> Result<(), ZaiError> {
+    if body
+        .get("success")
+        .is_some_and(|v| v.as_bool() != Some(true))
+        || body
+            .get("code")
+            .is_some_and(|v| number(Some(v)) != Some(200.0))
+    {
+        return Err(ZaiError::InvalidResponse);
+    }
+    Ok(())
+}
+
 pub fn map_quota(body: &Value) -> Result<Vec<QuotaWindow>, ZaiError> {
+    successful_envelope(body)?;
     let root = body.as_object().ok_or(ZaiError::InvalidResponse)?;
     let container = match root.get("data") {
         Some(data) => data.as_object().ok_or(ZaiError::InvalidResponse)?,
@@ -62,15 +62,32 @@ pub fn map_quota(body: &Value) -> Result<Vec<QuotaWindow>, ZaiError> {
 
     let mut session = None;
     let mut weekly = None;
-    for entry in limits
-        .iter()
-        .copied()
-        .filter(|entry| matches_limit(entry, "TOKENS_LIMIT"))
-    {
-        let Some(window) = classify_token_window(entry)? else {
+    let mut mcp_usage = None;
+    for entry in limits.iter().copied() {
+        if matches_limit(entry, "TIME_LIMIT") {
+            if mcp_usage.replace(mcp_quota(entry)?).is_some() {
+                return Err(ZaiError::InvalidResponse);
+            }
             continue;
+        }
+        let credit = matches_limit(entry, "CREDIT_LIMIT");
+        if !credit && !matches_limit(entry, "TOKENS_LIMIT") {
+            return Err(ZaiError::InvalidResponse);
+        }
+        let window = if credit {
+            credit_window(entry)?
+        } else {
+            classify_token_window(entry)?.ok_or(ZaiError::InvalidResponse)?
         };
-        let quota = percent_quota(entry, window)?;
+        let mut quota = percent_quota(entry, window)?;
+        if credit {
+            quota.format = QuotaFormat::Count;
+            quota.used_value = source_amount(entry, "currentValue")?;
+            quota.limit_value = source_amount(entry, "usage")?;
+            quota.remaining_value = source_amount(entry, "remaining")?;
+            quota.unit = Some("credits".into());
+            quota.source_note = Some("data.limits.CREDIT_LIMIT: Z.ai Coding Plan credits, not tokens or API balance; remaining only when supplied".into());
+        }
         let target = match window.kind {
             TokenWindowKind::Session => &mut session,
             TokenWindowKind::Weekly => &mut weekly,
@@ -79,13 +96,6 @@ pub fn map_quota(body: &Value) -> Result<Vec<QuotaWindow>, ZaiError> {
             return Err(ZaiError::InvalidResponse);
         }
     }
-
-    let mcp_usage = limits
-        .iter()
-        .copied()
-        .find(|entry| matches_limit(entry, "TIME_LIMIT"))
-        .map(mcp_quota)
-        .transpose()?;
 
     Ok(session.into_iter().chain(weekly).chain(mcp_usage).collect())
 }
@@ -131,6 +141,39 @@ fn classify_token_window(
     }))
 }
 
+// The official international console selects CREDIT_LIMIT by unit 3 (5h) / 6 (weekly).
+// Never substitute a plan's advertised capacity for response measurements.
+fn credit_window(entry: &serde_json::Map<String, Value>) -> Result<TokenWindow, ZaiError> {
+    let (kind, count, period_seconds) = match number(entry.get("unit")) {
+        Some(3.0) => (TokenWindowKind::Session, 5.0, 5 * 60 * 60),
+        Some(6.0) => (TokenWindowKind::Weekly, 1.0, 7 * 24 * 60 * 60),
+        _ => return Err(ZaiError::InvalidResponse),
+    };
+    if entry
+        .get("number")
+        .is_some_and(|v| number(Some(v)) != Some(count))
+    {
+        return Err(ZaiError::InvalidResponse);
+    }
+    Ok(TokenWindow {
+        kind,
+        period_seconds,
+    })
+}
+
+fn source_amount(
+    entry: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<f64>, ZaiError> {
+    match entry.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        value => number(value)
+            .filter(|value| *value >= 0.0)
+            .map(Some)
+            .ok_or(ZaiError::InvalidResponse),
+    }
+}
+
 fn percent_quota(
     entry: &serde_json::Map<String, Value>,
     window: TokenWindow,
@@ -166,19 +209,13 @@ fn mcp_quota(entry: &serde_json::Map<String, Value>) -> Result<QuotaWindow, ZaiE
     Ok(QuotaWindow {
         id: "webSearches".into(),
         label: "MCP Usage".into(),
-        used_percent: number(entry.get("percentage")).unwrap_or_else(|| {
-            if limit > 0.0 {
-                (used / limit * 100.0).clamp(0.0, 100.0)
-            } else {
-                0.0
-            }
-        }),
+        used_percent: number(entry.get("percentage")).ok_or(ZaiError::InvalidResponse)?,
         resets_at: reset_time(entry.get("nextResetTime")),
         period_seconds: 0,
         format: QuotaFormat::Count,
         used_value: Some(used),
         limit_value: Some(limit),
-        remaining_value: number(entry.get("remaining")),
+        remaining_value: source_amount(entry, "remaining")?,
         unit: None,
         estimated: false,
         source_note: Some(
@@ -215,7 +252,7 @@ mod tests {
     use chrono::{TimeZone, Utc};
     use serde_json::{json, Value};
 
-    use super::{is_no_coding_plan, map_quota, map_usage, plan_name};
+    use super::{is_no_coding_plan, map_quota, plan_name};
     use crate::{models::QuotaFormat, providers::zai::ZaiError};
 
     fn captured_quota() -> Value {
@@ -228,28 +265,30 @@ mod tests {
 
     #[test]
     fn captured_payload_maps_session_weekly_web_searches_and_plan() {
-        let mapped = map_usage(&captured_quota(), Some(&captured_subscription())).unwrap();
+        let quotas = map_quota(&captured_quota()).unwrap();
 
-        assert_eq!(mapped.plan.as_deref(), Some("GLM Coding Pro"));
         assert_eq!(
-            mapped
-                .quotas
+            plan_name(&captured_subscription()).as_deref(),
+            Some("GLM Coding Pro")
+        );
+        assert_eq!(
+            quotas
                 .iter()
                 .map(|quota| quota.id.as_str())
                 .collect::<Vec<_>>(),
             ["session", "weekly", "webSearches"]
         );
-        let session = &mapped.quotas[0];
+        let session = &quotas[0];
         assert_eq!(session.used_percent, 17.0);
         assert_eq!(session.period_seconds, 5 * 60 * 60);
         assert_eq!(
             session.resets_at,
             Utc.timestamp_millis_opt(1_782_724_971_179).single()
         );
-        let weekly = &mapped.quotas[1];
+        let weekly = &quotas[1];
         assert_eq!(weekly.period_seconds, 7 * 24 * 60 * 60);
 
-        let web = &mapped.quotas[2];
+        let web = &quotas[2];
         assert_eq!(web.format, QuotaFormat::Count);
         assert_eq!(web.used_value, Some(0.0));
         assert_eq!(web.limit_value, Some(1_000.0));
@@ -295,7 +334,7 @@ mod tests {
     fn explicit_zeroes_are_measurements_instead_of_missing_data() {
         let mapped = map_quota(&json!({"limits":[
             {"name":"TOKENS_LIMIT","unit":"3","number":"5","percentage":0},
-            {"name":"TIME_LIMIT","currentValue":"0","usage":"0"}
+            {"name":"TIME_LIMIT","currentValue":"0","usage":"0","percentage":0}
         ]}))
         .unwrap();
 
@@ -318,6 +357,9 @@ mod tests {
             json!({"data":{"limits":[{"type":"TIME_LIMIT","usage":1000}]}}),
             json!({"data":{"limits":[{"type":"TIME_LIMIT","currentValue":0}]}}),
             json!({"data":{"limits":[{"type":"TIME_LIMIT","currentValue":-1,"usage":1000}]}}),
+            json!({"data":{"limits":[{"type":"TIME_LIMIT","currentValue":0,"usage":0,"percentage":"bad"}]}}),
+            json!({"data":{"limits":[{"type":"TIME_LIMIT","currentValue":0,"usage":0}]}}),
+            json!({"data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"percentage":10}, {"type":"TIME_LIMIT","currentValue":0,"usage":0,"percentage":"bad"}]}}),
         ] {
             assert!(matches!(map_quota(&body), Err(ZaiError::InvalidResponse)));
         }
@@ -327,23 +369,18 @@ mod tests {
     }
 
     #[test]
-    fn unknown_limits_and_units_do_not_hide_known_meters() {
-        let mapped = map_quota(&json!({"data":{"limits":[
-            {"type":"FUTURE_LIMIT"},
-            {"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70},
-            {"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":25}
-        ]}}))
-        .unwrap();
-
-        assert_eq!(mapped.len(), 1);
-        assert_eq!(mapped[0].id, "session");
-
-        let unknown_only = map_quota(&json!({"data":{"limits":[
-            {"type":"FUTURE_LIMIT"},
-            {"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70}
-        ]}}))
-        .unwrap();
-        assert!(unknown_only.is_empty());
+    fn unknown_limits_or_units_are_not_silently_successful() {
+        for unknown in [
+            json!({"type":"FUTURE_LIMIT"}),
+            json!({"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70}),
+            json!({"type":"CREDIT_LIMIT","unit":99,"percentage":70}),
+        ] {
+            assert!(map_quota(&json!({"data":{"limits":[unknown]}})).is_err());
+            assert!(map_quota(&json!({"data":{"limits":[unknown,
+                {"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":25}
+            ]}}))
+            .is_err());
+        }
     }
 
     #[test]
@@ -351,7 +388,7 @@ mod tests {
         let mapped = map_quota(&json!({"data":{"limits":[
             {"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":25,
              "nextResetTime":"not-a-time"},
-            {"type":"TIME_LIMIT","currentValue":1,"usage":10,
+            {"type":"TIME_LIMIT","currentValue":1,"usage":10,"percentage":10,
              "nextResetTime":"1785292686976"}
         ]}}))
         .unwrap();
@@ -385,6 +422,67 @@ mod tests {
         );
         assert_eq!(plan_name(&json!({"data":[]})), None);
         assert_eq!(plan_name(&json!({"data":[{"productName":42}]})), None);
+    }
+
+    #[test]
+    fn credits_keep_source_precision_units_windows_and_null_remaining() {
+        let body: Value = serde_json::from_str(include_str!("fixtures/credits.json")).unwrap();
+        let quotas = map_quota(&body).unwrap();
+        assert_eq!(quotas.len(), 2);
+        assert_eq!(quotas[0].id, "session");
+        assert_eq!(quotas[0].period_seconds, 18_000);
+        assert_eq!(quotas[0].format, QuotaFormat::Count);
+        assert_eq!(quotas[0].unit.as_deref(), Some("credits"));
+        assert_eq!(quotas[0].used_value, Some(11952.123456));
+        assert_eq!(quotas[0].limit_value, Some(12000.0));
+        assert_eq!(quotas[0].remaining_value, Some(47.876544));
+        assert_eq!(quotas[0].used_percent, 99.6010288);
+        assert_eq!(
+            quotas[0].resets_at,
+            Utc.timestamp_millis_opt(1791028800000).single()
+        );
+        assert_eq!(quotas[1].id, "weekly");
+        assert_eq!(quotas[1].period_seconds, 604800);
+        assert_eq!(quotas[1].remaining_value, None);
+        assert_eq!(quotas[1].resets_at, None);
+        assert!(quotas.iter().all(|q| !q.estimated));
+    }
+
+    #[test]
+    fn credits_do_not_invent_amounts_and_keep_zeroes() {
+        let quotas = map_quota(&json!({"limits":[
+            {"type":"CREDIT_LIMIT","unit":3,"percentage":100,"currentValue":12000,"usage":12000,"remaining":0},
+            {"type":"CREDIT_LIMIT","unit":6,"percentage":0,"currentValue":null,"usage":null}
+        ]})).unwrap();
+        assert_eq!(quotas[0].remaining_value, Some(0.0));
+        assert_eq!(quotas[1].used_value, None);
+        assert_eq!(quotas[1].limit_value, None);
+        assert_eq!(quotas[1].remaining_value, None);
+        let mut body = json!({"limits":[{"type":"CREDIT_LIMIT","unit":3,"percentage":25,"currentValue":40,"usage":100,"remaining":50}]});
+        assert_eq!(map_quota(&body).unwrap()[0].remaining_value, Some(50.0));
+        for bad in [json!(-1), json!("NaN"), json!("bad"), json!({})] {
+            body["limits"][0]["remaining"] = bad;
+            assert!(map_quota(&body).is_err());
+        }
+        body["limits"][0]["remaining"] = Value::Null;
+        body["limits"][0]["number"] = json!(24);
+        assert!(map_quota(&body).is_err());
+    }
+
+    #[test]
+    fn explicit_failure_envelopes_never_become_fresh_empty_usage_or_plan_names() {
+        for (success, code) in [
+            (json!(false), json!(500)),
+            (json!(true), json!(500)),
+            (json!("true"), json!(200)),
+        ] {
+            let body =
+                json!({"success":success,"code":code,"msg":"internal error","data":{"limits":[]}});
+            assert_eq!(map_quota(&body), Err(ZaiError::InvalidResponse));
+            let subscription =
+                json!({"success":success,"code":code,"data":[{"productName":"GLM Coding Pro"}]});
+            assert_eq!(plan_name(&subscription), None);
+        }
     }
 
     #[test]
