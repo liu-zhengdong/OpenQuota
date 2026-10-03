@@ -1,0 +1,101 @@
+{
+  "providerId": "commandcode",
+  "plan": "Pro",
+  "quotas": [
+    {
+      "id": "credits",
+      "label": "Credits",
+      "usedPercent": 47.368421052631575,
+      "resetsAt": "2026-11-01T00:00:00Z",
+      "periodSeconds": 2678400,
+      "format": "dollars",
+      "usedValue": 18.0,
+      "limitValue": 38.0,
+      "estimated": false
+    },
+    {
+      "id": "fiveHour",
+      "label": "5-hour",
+      "usedPercent": 20.0,
+      "resetsAt": "2026-10-03T09:00:00Z",
+      "periodSeconds": 18000,
+      "format": "percent",
+      "usedValue": 2.0,
+      "limitValue": 10.0,
+      "estimated": false
+    },
+    {
+      "id": "weekly",
+      "label": "Weekly",
+      "usedPercent": 40.0,
+      "resetsAt": "2026-10-10T00:00:00Z",
+      "periodSeconds": 604800,
+      "format": "percent",
+      "usedValue": 20.0,
+      "limitValue": 50.0,
+      "estimated": false
+    }
+  ],
+  "valueMetrics": [
+    {
+      "id": "remaining",
+      "label": "Total remaining",
+      "values": [
+        {
+          "number": 20.0,
+          "kind": "dollars",
+          "estimated": false
+        }
+      ],
+      "expiriesAt": []
+    },
+    {
+      "id": "freeCredits",
+      "label": "Free credits",
+      "values": [
+        {
+          "number": 5.0,
+          "kind": "dollars",
+          "estimated": false
+        }
+      ],
+      "expiriesAt": []
+    },
+    {
+      "id": "monthlyCredits",
+      "label": "Monthly remaining",
+      "values": [
+        {
+          "number": 12.0,
+          "kind": "dollars",
+          "estimated": false
+        }
+      ],
+      "expiriesAt": []
+    },
+    {
+      "id": "purchasedCredits",
+      "label": "Purchased credits",
+      "values": [
+        {
+          "number": 3.0,
+          "kind": "dollars",
+          "estimated": false
+        }
+      ],
+      "expiriesAt": []
+    }
+  ],
+  "statusMetrics": [
+    {
+      "id": "daysLeft",
+      "label": "Days to renewal",
+      "text": "29",
+      "tone": "neutral"
+    }
+  ],
+  "notices": [],
+  "warnings": [],
+  "refreshedAt": "2026-10-03T00:00:00Z",
+  "remembered": false
+}

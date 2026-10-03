@@ -9,7 +9,7 @@
   import { reorderFlip } from './motion';
   import { pointerReorder } from './pointerReorder';
   import { t } from './i18n';
-  import { metricLabel } from './i18n/labels';
+  import { metricLabel, providerDescription } from './i18n/labels';
   import { canRenameProvider } from './providerNames';
 
   interface Props {
@@ -225,6 +225,9 @@
         </div>
       </div>
     {/each}
+    {#if providerDescription(provider.id)}
+      <p class="provider-description">{providerDescription(provider.id)}</p>
+    {/if}
     <ProviderApiKeySection
       providerId={provider.id}
       providerName={providerDisplayName(provider.id)}
@@ -271,6 +274,13 @@
 
     .pin-button.pinned {
       color: var(--meter-fill);
+    }
+
+    .provider-description {
+      margin: 0 8px 14px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--secondary);
     }
 
     .metric-section {

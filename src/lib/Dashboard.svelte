@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { metricHasSource } from './metrics';
   import { onDestroy, tick } from 'svelte';
   import { flip } from 'svelte/animate';
   import { scale, slide } from 'svelte/transition';
@@ -111,15 +112,22 @@
   const dashboardProviders = $derived.by(() => {
     const entries = enabledProviders.map((provider) => {
       const state = viewState.providers[provider.id];
+      const snapshot = state?.snapshot ?? emptyProviderSnapshot(provider.id);
       return {
         provider,
         state,
-        snapshot: state?.snapshot ?? emptyProviderSnapshot(provider.id),
+        snapshot,
         alwaysMetrics: provider.metrics.filter(
-          (metric) => metric.enabled && metric.section === 'alwaysVisible',
+          (metric) =>
+            metric.enabled &&
+            metric.section === 'alwaysVisible' &&
+            metricHasSource(catalog.metric(metric.id), snapshot),
         ),
         demandMetrics: provider.metrics.filter(
-          (metric) => metric.enabled && metric.section === 'onDemand',
+          (metric) =>
+            metric.enabled &&
+            metric.section === 'onDemand' &&
+            metricHasSource(catalog.metric(metric.id), snapshot),
         ),
         links: catalog.provider(provider.id)?.links ?? [],
       };

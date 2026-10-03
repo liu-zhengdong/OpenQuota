@@ -376,6 +376,9 @@ pub struct TrayMetricDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricDefinition {
+    /// Optional cloud metrics disappear until their source is reported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_when_missing: bool,
     pub id: String,
     pub label: String,
     pub source: MetricSource,
@@ -403,6 +406,7 @@ impl MetricDefinition {
             id: id.into(),
             label: label.into(),
             source,
+            hide_when_missing: false,
             pinnable,
             default_enabled,
             default_section,

@@ -83,7 +83,7 @@ Options:
   --json               Print a stable JSON array instead of a text table
   --refresh            Pull current readings before printing
   --only <ids>         With --refresh, pull only these comma-separated providers:
-                       antigravity, copilot, cursor, devin, grok, kimi, minimax,
+                       antigravity, copilot, cursor, devin, grok, kimi, minimax, commandcode,
                        opencode, openrouter, zai
   --timeout <seconds>  With --refresh, time limit for each provider (default 20)
   --db <path>          Read this database file instead of the default (for testing)

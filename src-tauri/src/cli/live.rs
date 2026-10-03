@@ -21,10 +21,10 @@ use tempfile::NamedTempFile;
 use crate::{
     models::ProviderSnapshot,
     providers::{
-        antigravity::AntigravityProvider, copilot::CopilotProvider, cursor::CursorProvider,
-        devin::DevinProvider, grok::GrokProvider, kimi::KimiProvider, minimax::MiniMaxProvider,
-        opencode::OpenCodeProvider, openrouter::OpenRouterProvider, zai::ZaiProvider,
-        UsageProvider,
+        antigravity::AntigravityProvider, commandcode::CommandCodeProvider,
+        copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider, grok::GrokProvider,
+        kimi::KimiProvider, minimax::MiniMaxProvider, opencode::OpenCodeProvider,
+        openrouter::OpenRouterProvider, zai::ZaiProvider, UsageProvider,
     },
 };
 
@@ -32,7 +32,7 @@ pub const CACHE_FILE_NAME: &str = "pace-live.json";
 
 /// Providers that can be pulled without the application database. Claude and Codex keep
 /// account records there, so only the application refreshes them.
-pub const PULLABLE_PROVIDERS: [&str; 10] = [
+pub const PULLABLE_PROVIDERS: [&str; 11] = [
     "antigravity",
     "copilot",
     "cursor",
@@ -40,6 +40,7 @@ pub const PULLABLE_PROVIDERS: [&str; 10] = [
     "grok",
     "kimi",
     "minimax",
+    "commandcode",
     "opencode",
     "openrouter",
     "zai",
@@ -87,6 +88,7 @@ fn build_provider(
         "grok" => boxed(GrokProvider::new()),
         "kimi" => boxed(KimiProvider::new()),
         "minimax" => boxed(MiniMaxProvider::new()),
+        "commandcode" => boxed(CommandCodeProvider::new()),
         "opencode" => Ok(Box::new(OpenCodeProvider::new())),
         "openrouter" => boxed(OpenRouterProvider::new()),
         "zai" => boxed(ZaiProvider::new()),

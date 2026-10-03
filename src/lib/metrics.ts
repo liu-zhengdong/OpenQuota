@@ -1,3 +1,4 @@
+import { t } from './i18n';
 import type { MetricDefinition, ProviderCatalog, ProviderDefinition } from './types';
 
 export class ProviderCatalogIndex {
@@ -37,7 +38,9 @@ export class ProviderCatalogIndex {
   displayName(id: string, providerNames?: Record<string, string>) {
     const customName = providerNames?.[id]?.trim();
     if (customName) return customName;
-    return this.provider(id)?.displayName ?? id;
+    const key = `notices.${id}.name`;
+    const translated = t(key);
+    return translated === key ? (this.provider(id)?.displayName ?? id) : translated;
   }
 
   supportsApiKeyConfiguration(id: string) {
@@ -105,4 +108,21 @@ export function withCatalogLayouts(
       }),
     },
   };
+}
+
+export function metricHasSource(
+  definition: MetricDefinition | undefined,
+  snapshot: import('./types').ProviderSnapshot,
+): boolean {
+  if (!definition?.hideWhenMissing) return true;
+  const source = definition.source;
+  if (source.kind === 'status')
+    return snapshot.statusMetrics.some((metric) => metric.id === source.sourceId);
+  if (source.kind === 'value')
+    return snapshot.valueMetrics.some((metric) => metric.id === source.sourceId);
+  return (
+    snapshot.quotas.some((metric) => metric.id === source.sourceId) ||
+    (source.kind === 'quotaOrValue' &&
+      snapshot.valueMetrics.some((metric) => metric.id === source.sourceId))
+  );
 }
