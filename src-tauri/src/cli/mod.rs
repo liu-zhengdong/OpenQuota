@@ -6,6 +6,8 @@
 
 mod freshness;
 mod live;
+mod report;
+use report::*;
 
 use std::{
     collections::HashSet,
@@ -15,15 +17,14 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::{
     i18n::{resolve_ui_locale, system_language_tag},
     instance_lock,
     models::{ProviderSnapshot, QuotaFormat, QuotaWindow, UiLanguagePreference},
-    pacing,
 };
 
 use freshness::RefreshOutcome;
@@ -495,28 +496,6 @@ impl fmt::Display for PaceError {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct PaceRow {
-    provider_id: String,
-    plan: Option<String>,
-    window_id: Option<String>,
-    window_label: Option<String>,
-    used_percent: Option<f64>,
-    period_elapsed_percent: Option<f64>,
-    spare_percent: Option<f64>,
-    hours_to_reset: Option<f64>,
-    short_window_id: Option<String>,
-    short_window_used_percent: Option<f64>,
-    refreshed_at: String,
-    refreshed_hours_ago: f64,
-    /// The row is older than the staleness the desktop panel marks, or a requested pull
-    /// failed, so its numbers are a remembered last read rather than a current one.
-    stale: bool,
-    #[serde(skip)]
-    outcome: RefreshOutcome,
-}
-
 #[derive(Debug, Default)]
 struct StoredSnapshots {
     snapshots: Vec<ProviderSnapshot>,
@@ -712,118 +691,6 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, rusqlite::
         |row| row.get(0),
     )?;
     Ok(count > 0)
-}
-
-fn build_row(snapshot: ProviderSnapshot, now: DateTime<Utc>, outcome: RefreshOutcome) -> PaceRow {
-    let comparison = comparison_window(&snapshot.quotas);
-    let short = short_window(&snapshot.quotas);
-    PaceRow {
-        provider_id: snapshot.provider_id,
-        plan: snapshot.plan,
-        window_id: comparison.map(|window| window.id.clone()),
-        window_label: comparison.map(|window| window.label.clone()),
-        used_percent: comparison.map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
-        period_elapsed_percent: comparison
-            .and_then(|window| pacing::period_elapsed_percent(window, now))
-            .map(round1),
-        spare_percent: comparison
-            .and_then(|window| pacing::spare_percent(window, now))
-            .map(round1),
-        hours_to_reset: comparison
-            .and_then(|window| window.resets_at)
-            .map(|reset| round1(hours_between(now, reset))),
-        short_window_id: short.map(|window| window.id.clone()),
-        short_window_used_percent: short
-            .map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
-        refreshed_at: snapshot
-            .refreshed_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
-        refreshed_hours_ago: round1(hours_between(snapshot.refreshed_at, now).max(0.0)),
-        stale: freshness::is_stale(outcome, snapshot.refreshed_at, now),
-        outcome,
-    }
-}
-
-/// Sorts by spare percentage, largest first, keeping providers without a
-/// comparable window at the end in their original order.
-fn sort_rows(rows: &mut [PaceRow]) {
-    rows.sort_by(
-        |left, right| match (left.spare_percent, right.spare_percent) {
-            (Some(left_spare), Some(right_spare)) => right_spare
-                .partial_cmp(&left_spare)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        },
-    );
-}
-
-fn comparison_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
-    let weekly = percent
-        .iter()
-        .copied()
-        .filter(|window| matches_name(window, "week"))
-        .collect::<Vec<_>>();
-    if !weekly.is_empty() {
-        return longest_window(weekly);
-    }
-    longest_window(percent)
-}
-
-fn short_window(quotas: &[QuotaWindow]) -> Option<&QuotaWindow> {
-    let percent = percent_windows(quotas).collect::<Vec<_>>();
-    if let Some(session) = percent
-        .iter()
-        .copied()
-        .find(|window| matches_name(window, "session"))
-    {
-        return Some(session);
-    }
-    percent
-        .iter()
-        .copied()
-        .filter(|window| {
-            window.period_seconds > 0 && window.period_seconds <= SHORT_WINDOW_MAX_PERIOD_SECONDS
-        })
-        .reduce(|best, window| {
-            if window.period_seconds < best.period_seconds {
-                window
-            } else {
-                best
-            }
-        })
-}
-
-fn percent_windows(quotas: &[QuotaWindow]) -> impl Iterator<Item = &QuotaWindow> {
-    quotas
-        .iter()
-        .filter(|window| window.format == QuotaFormat::Percent)
-}
-
-fn matches_name(window: &QuotaWindow, needle: &str) -> bool {
-    window.id.to_ascii_lowercase().contains(needle)
-        || window.label.to_ascii_lowercase().contains(needle)
-}
-
-fn longest_window(windows: Vec<&QuotaWindow>) -> Option<&QuotaWindow> {
-    windows.into_iter().reduce(|best, window| {
-        if window.period_seconds > best.period_seconds {
-            window
-        } else {
-            best
-        }
-    })
-}
-
-fn hours_between(start: DateTime<Utc>, end: DateTime<Utc>) -> f64 {
-    end.signed_duration_since(start).num_seconds() as f64 / 3_600.0
-}
-
-fn round1(value: f64) -> f64 {
-    // The `+ 0.0` normalizes negative zero away from JSON and text output.
-    (value * 10.0).round() / 10.0 + 0.0
 }
 
 fn database_path(explicit: Option<&Path>, environment: Option<OsString>) -> PathBuf {
