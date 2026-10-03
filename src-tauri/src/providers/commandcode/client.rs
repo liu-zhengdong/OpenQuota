@@ -14,7 +14,7 @@ pub struct UsageData {
 }
 impl CommandCodeClient {
     pub fn new() -> Result<Self, CommandCodeError> {
-        Self::with_base("https://commandcode.ai", Duration::from_secs(15))
+        Self::with_base("https://api.commandcode.ai", Duration::from_secs(15))
     }
     pub(super) fn with_base(base: &str, timeout: Duration) -> Result<Self, CommandCodeError> {
         Ok(Self {
@@ -53,22 +53,31 @@ impl CommandCodeClient {
     }
     pub fn fetch(&self, key: &str) -> Result<UsageData, CommandCodeError> {
         let whoami = self.get(key, "/alpha/whoami", &[("limits", "1")])?;
+        // Personal accounts have no org. The CLI omits orgId in that case.
         let org = whoami
             .pointer("/org/id")
             .and_then(Value::as_str)
-            .filter(|id| !id.is_empty())
-            .ok_or(CommandCodeError::InvalidResponse)?;
+            .filter(|id| !id.is_empty());
+        if org.is_none()
+            && whoami
+                .pointer("/user/id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .is_none()
+        {
+            return Err(CommandCodeError::InvalidResponse);
+        }
+        let org_query: Vec<_> = org.map(|id| vec![("orgId", id)]).unwrap_or_default();
         // Summary depends on the subscription's period start; only these two requests are independent.
         let (credits, subscription) = thread::scope(|scope| {
-            let credits =
-                scope.spawn(|| self.get(key, "/alpha/billing/credits", &[("orgId", org)]));
-            let subscription = self.get(key, "/alpha/billing/subscriptions", &[("orgId", org)]);
+            let credits = scope.spawn(|| self.get(key, "/alpha/billing/credits", &org_query));
+            let subscription = self.get(key, "/alpha/billing/subscriptions", &org_query);
             let credits = credits
                 .join()
                 .map_err(|_| CommandCodeError::InvalidResponse)?;
             Ok::<_, CommandCodeError>((credits?, subscription?))
         })?;
-        let mut query = vec![("orgId", org)];
+        let mut query = org_query;
         if let Some(since) = subscription
             .pointer("/data/currentPeriodStart")
             .and_then(Value::as_str)

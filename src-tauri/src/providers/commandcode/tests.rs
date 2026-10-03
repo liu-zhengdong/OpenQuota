@@ -80,7 +80,7 @@ fn malformed_credit_and_summary_fields_are_rejected() {
     assert!(map_usage(&data, now()).is_err());
 }
 #[test]
-fn all_plan_prefixes_and_effective_statuses() {
+fn all_plan_prefixes_use_the_active_monthly_pool() {
     for (id, name, pool) in [
         ("individual-go", "Go", 10.0_f64),
         ("individual-go-v1", "Go", 10.0),
@@ -92,17 +92,47 @@ fn all_plan_prefixes_and_effective_statuses() {
         ("individual-ultra", "Ultra", 300.0),
         ("teams-pro", "Teams Pro", 40.0),
     ] {
-        for status in ["active", "trialing", "past_due"] {
-            let mut data = fixture();
-            data.subscription["data"]["planId"] =
-                json!(format!("{}-monthly", id.to_uppercase().replace('-', "_")));
-            data.subscription["data"]["status"] = json!(status);
-            let snapshot = map_usage(&data, now()).unwrap();
-            assert_eq!(snapshot.plan.as_deref(), Some(name));
-            assert_eq!(snapshot.quotas[0].limit_value, Some(pool.max(12.0) + 8.0));
-        }
+        let mut data = fixture();
+        data.subscription["data"]["planId"] =
+            json!(format!("{}-monthly", id.to_uppercase().replace('-', "_")));
+        data.subscription["data"]["status"] = json!("active");
+        let snapshot = map_usage(&data, now()).unwrap();
+        assert_eq!(snapshot.plan.as_deref(), Some(name));
+        assert_eq!(snapshot.quotas[0].limit_value, Some(pool.max(12.0) + 8.0));
     }
 }
+#[test]
+fn non_active_and_unknown_subscriptions_do_not_inflate_the_pool() {
+    for status in [
+        json!("trialing"),
+        json!("past_due"),
+        json!("canceled"),
+        json!("unknown"),
+        Value::Null,
+    ] {
+        let mut data = fixture();
+        data.subscription["data"]["status"] = status;
+        data.summary["totalCost"] = json!(7);
+        let snapshot = map_usage(&data, now()).unwrap();
+        assert_eq!(snapshot.quotas[0].limit_value, Some(27.0));
+        assert_eq!(snapshot.quotas[0].used_value, Some(7.0));
+        // Zero remaining must stay exhausted, even when a known plan has a monthly allowance.
+        for id in ["monthlyCredits", "purchasedCredits", "freeCredits"] {
+            data.credits["credits"][id] = json!(0);
+        }
+        let exhausted = map_usage(&data, now()).unwrap();
+        assert_eq!(exhausted.quotas[0].used_percent, 100.0);
+        assert_eq!(exhausted.value_metrics[0].values[0].number, 0.0);
+    }
+    let mut data = fixture();
+    data.subscription["data"]["planId"] = json!("unknown-plan");
+    data.summary["totalCost"] = json!(7);
+    assert_eq!(
+        map_usage(&data, now()).unwrap().quotas[0].limit_value,
+        Some(27.0)
+    );
+}
+
 #[test]
 fn renewal_urgency_and_bad_windows() {
     for (end, days, tone) in [
@@ -122,9 +152,21 @@ fn renewal_urgency_and_bad_windows() {
     assert_eq!(map_usage(&data, now()).unwrap().quotas.len(), 1);
 }
 #[test]
+fn unset_window_reset_does_not_become_the_unix_epoch() {
+    let mut data = fixture();
+    data.credits["windowLimits"]["fiveHour"]["resetAt"] = json!(0);
+    data.credits["windowLimits"]["weekly"]["resetAt"] = json!(-1);
+    let snapshot = map_usage(&data, now()).unwrap();
+    assert_eq!(snapshot.quotas.len(), 3);
+    assert!(snapshot.quotas[1].resets_at.is_none());
+    assert!(snapshot.quotas[2].resets_at.is_none());
+}
+
+#[test]
 fn authentication_rate_limit_network_and_invalid_json_are_safe() {
     for (status, kind) in [
         (401, ProviderErrorKind::Authentication),
+        (403, ProviderErrorKind::Authentication),
         (429, ProviderErrorKind::RateLimited),
         (529, ProviderErrorKind::RateLimited),
         (500, ProviderErrorKind::InvalidResponse),
@@ -153,6 +195,25 @@ fn authentication_rate_limit_network_and_invalid_json_are_safe() {
 }
 #[test]
 fn mock_server_checks_routes_bearer_org_and_period_start() {
+    check_routes(true);
+}
+#[test]
+fn personal_account_omits_org_id() {
+    check_routes(false);
+}
+#[test]
+fn whoami_without_an_account_is_rejected() {
+    let client = CommandCodeClient::with_base(
+        &test_http::serve_once(200, &[], r#"{"org":null,"user":null}"#),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    assert!(matches!(
+        client.fetch("fake-test-secret"),
+        Err(super::CommandCodeError::InvalidResponse)
+    ));
+}
+fn check_routes(has_org: bool) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -164,7 +225,11 @@ fn mock_server_checks_routes_bearer_org_and_period_start() {
             let n = stream.read(&mut buf).unwrap();
             let request = String::from_utf8_lossy(&buf[..n]).into_owned();
             let body = if request.contains("/alpha/whoami?") {
-                r#"{"org":{"id":"org/test"}}"#
+                if has_org {
+                    r#"{"org":{"id":"org/test"}}"#
+                } else {
+                    r#"{"org":null,"user":{"id":"user/test"}}"#
+                }
             } else if request.contains("/alpha/billing/credits?") {
                 CREDITS
             } else if request.contains("/alpha/billing/subscriptions?") {
@@ -193,7 +258,10 @@ fn mock_server_checks_routes_bearer_org_and_period_start() {
             .contains("authorization: bearer fake-test-secret"));
     }
     for request in &requests[1..] {
-        assert!(request.contains("orgId=org%2Ftest"));
+        assert_eq!(request.contains("orgId=org%2Ftest"), has_org);
+        if !has_org {
+            assert!(!request.contains("orgId="));
+        }
     }
     assert!(requests[3].contains("since=2026-10-01T00%3A00%3A00Z"));
 }

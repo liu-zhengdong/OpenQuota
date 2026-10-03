@@ -38,6 +38,9 @@ fn balance_number(value: Option<&Value>) -> Option<f64> {
 }
 fn date(value: Option<&Value>) -> Option<DateTime<Utc>> {
     if let Some(ms) = value.and_then(Value::as_i64) {
+        if ms <= 0 {
+            return None;
+        }
         return DateTime::from_timestamp_millis(ms);
     }
     value
@@ -105,7 +108,7 @@ pub fn map_usage(
         .ok_or(CommandCodeError::InvalidResponse)?;
     let active = matches!(
         subscription.get("status").and_then(Value::as_str),
-        Some("active" | "trialing" | "past_due")
+        Some("active")
     );
     let plan_id = subscription
         .get("planId")
