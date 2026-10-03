@@ -326,7 +326,12 @@ fn tray_metric(
                     let value =
                         if percent > 0.0 && percent < 100.0 && (rounded == 0.0 || rounded == 100.0)
                         {
-                            percent.to_string()
+                            // Mirrors Number(percent.toPrecision(12)) in quotaReading.ts.
+                            // Significant digits remove arithmetic noise without zeroing tiny values.
+                            format!("{percent:.11e}")
+                                .parse::<f64>()
+                                .unwrap_or(percent)
+                                .to_string()
                         } else {
                             format!("{percent:.0}")
                         };
@@ -712,6 +717,44 @@ mod tests {
                 .value,
             "50"
         );
+    }
+
+    #[test]
+    fn boundary_percentages_remove_float_noise_without_rounding_away_remainders() {
+        let registry = ProviderRegistry::from_definitions(vec![
+            codex::definition(),
+            crate::providers::zai::definition(),
+        ])
+        .unwrap();
+        let definition = registry.metric("zai.session").unwrap();
+        let mut snapshot: ProviderSnapshot = serde_json::from_value(serde_json::json!({
+            "providerId":"zai", "plan":null,
+            "quotas":[{"id":"session", "label":"Session", "format":"count",
+                "usedPercent":99.6, "remainingValue":null, "periodSeconds":18000}],
+            "valueMetrics":[], "statusMetrics":[], "notices":[], "warnings":[],
+            "refreshedAt":"2026-10-03T00:00:00Z", "remembered":false
+        }))
+        .unwrap();
+        let left = tray_metric(&definition, &snapshot, UsageDisplay::Left).unwrap();
+        assert_eq!(left.value, "0.4%");
+        assert_eq!(left.detail, "Session 0.4% left");
+        assert_eq!(
+            tray_metric(&definition, &snapshot, UsageDisplay::Used)
+                .unwrap()
+                .value,
+            "99.6%"
+        );
+        for used_percent in [99.99999999, 1e-20] {
+            snapshot.quotas[0].used_percent = used_percent;
+            let display = if used_percent < 1.0 {
+                UsageDisplay::Used
+            } else {
+                UsageDisplay::Left
+            };
+            let metric = tray_metric(&definition, &snapshot, display).unwrap();
+            let value: f64 = metric.value.trim_end_matches('%').parse().unwrap();
+            assert!(value > 0.0 && value < 1.0, "{}", metric.value);
+        }
     }
 
     #[test]
