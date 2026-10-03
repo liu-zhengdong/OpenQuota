@@ -1,5 +1,9 @@
 // Providers 的提示与警告文案，键名必须与英文目录完全一致（`catalog.test.ts` 会比对）。
 export const providerNotices = {
+  commandcode: {
+    name: 'Command Code',
+    description: '运行 `command-code auth login` 登录，读取 Command Code 的月度、购买和免费额度。',
+  },
   dataFrom: '数据来自 {time}',
   claude: {
     rateLimited: {

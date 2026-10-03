@@ -36,6 +36,7 @@ const OPENCODE_ICON: &str = include_str!("../../src/assets/provider-icons/openco
 const OPENROUTER_ICON: &str = include_str!("../../src/assets/provider-icons/openrouter.svg");
 const ZAI_ICON: &str = include_str!("../../src/assets/provider-icons/zai.svg");
 const KIMI_ICON: &str = include_str!("../../src/assets/provider-icons/kimi.svg");
+const COMMANDCODE_ICON: &str = include_str!("../../src/assets/provider-icons/commandcode.svg");
 const MINIMAX_ICON: &str = include_str!("../../src/assets/provider-icons/minimax.svg");
 
 type Rgb = (u8, u8, u8);
@@ -339,6 +340,7 @@ fn provider_path(provider_id: &str) -> Option<&'static Path> {
     static OPENROUTER: OnceLock<Path> = OnceLock::new();
     static ZAI: OnceLock<Path> = OnceLock::new();
     static KIMI: OnceLock<Path> = OnceLock::new();
+    static COMMANDCODE: OnceLock<Path> = OnceLock::new();
     static MINIMAX: OnceLock<Path> = OnceLock::new();
     match crate::providers::provider_family(provider_id) {
         "claude" => Some(parsed(CLAUDE_ICON, &CLAUDE)),
@@ -352,6 +354,7 @@ fn provider_path(provider_id: &str) -> Option<&'static Path> {
         "openrouter" => Some(parsed(OPENROUTER_ICON, &OPENROUTER)),
         "zai" => Some(parsed(ZAI_ICON, &ZAI)),
         "kimi" => Some(parsed(KIMI_ICON, &KIMI)),
+        "commandcode" => Some(parsed(COMMANDCODE_ICON, &COMMANDCODE)),
         "minimax" => Some(parsed(MINIMAX_ICON, &MINIMAX)),
         _ => None,
     }
@@ -665,6 +668,7 @@ mod tests {
             "zai",
             "kimi",
             "minimax",
+            "commandcode",
         ] {
             let path = provider_path(provider).expect("known provider mark should exist");
             assert!(path.bounds().width() > 0.0);

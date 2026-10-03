@@ -1,4 +1,11 @@
 export const windows = {
+  remaining: '总剩余',
+  freeCredits: '免费额度',
+  monthlyCredits: '月度剩余',
+  purchasedCredits: '购买额度',
+  fiveHour: '5 小时',
+  daysLeft: '距续订天数',
+
   session: '5 小时窗口',
   weekly: '每周',
   daily: '每天',

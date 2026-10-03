@@ -1,4 +1,11 @@
 export const windows = {
+  remaining: 'Total remaining',
+  freeCredits: 'Free credits',
+  monthlyCredits: 'Monthly remaining',
+  purchasedCredits: 'Purchased credits',
+  fiveHour: '5-hour',
+  daysLeft: 'Days to renewal',
+
   session: 'Session',
   weekly: 'Weekly',
   daily: 'Daily',

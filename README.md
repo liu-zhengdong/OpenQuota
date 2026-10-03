@@ -62,6 +62,8 @@ from this repository's official release page; on macOS, manual approval may be r
 - **[Z.ai](docs/providers/zai.md)** — GLM Coding Plan session, weekly, and web-search quotas (API key)
 - **[Kimi](docs/providers/kimi.md)** — Kimi Code session and weekly quotas (API key)
 - **[MiniMax](docs/providers/minimax.md)** — Token Plan session and weekly quotas (API key)
+- **[Command Code](docs/providers/commandcode.md)** — monthly, purchased and free credits, renewal
+  date, and available 5-hour and weekly windows (CLI login)
 
 Most providers use credentials already available on your computer. OpenRouter, Z.ai, Kimi, and
 MiniMax require API keys, which you can add in Customize; OpenQuota stores them securely in your

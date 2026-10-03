@@ -1,6 +1,11 @@
 // Provider-authored notices and warnings, keyed by the stable ids the Rust providers send.
 // Keys must stay identical to the chinese catalog: `catalog.test.ts` compares them.
 export const providerNotices = {
+  commandcode: {
+    name: 'Command Code',
+    description:
+      'Sign in with `command-code auth login`. Reads monthly, purchased and free credits from Command Code.',
+  },
   dataFrom: 'Data from {time}',
   claude: {
     rateLimited: {

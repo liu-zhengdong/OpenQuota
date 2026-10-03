@@ -29,3 +29,9 @@ export function translatedLinks(links: ProviderLink[]): ProviderLink[] {
 export function usageWord(display: 'used' | 'left'): string {
   return t(display === 'used' ? 'common.used' : 'common.left');
 }
+
+export function providerDescription(providerId: string): string {
+  const key = `notices.${providerId}.description`;
+  const description = t(key);
+  return description === key ? '' : description;
+}

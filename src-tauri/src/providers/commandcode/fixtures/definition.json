@@ -1,0 +1,142 @@
+{
+  "id": "commandcode",
+  "displayName": "Command Code",
+  "shortName": "CC",
+  "fallbackEnabled": false,
+  "links": [],
+  "metrics": [
+    {
+      "id": "commandcode.credits",
+      "label": "Credits",
+      "source": {
+        "kind": "quota",
+        "sourceId": "credits",
+        "sessionWindow": false
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "onDemand",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "C",
+        "suffix": null
+      }
+    },
+    {
+      "id": "commandcode.remaining",
+      "label": "Total remaining",
+      "source": {
+        "kind": "value",
+        "sourceId": "remaining"
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "alwaysVisible",
+      "defaultPinned": true,
+      "tray": {
+        "shortLabel": "C",
+        "suffix": null
+      }
+    },
+    {
+      "id": "commandcode.freeCredits",
+      "label": "Free credits",
+      "source": {
+        "kind": "value",
+        "sourceId": "freeCredits"
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "alwaysVisible",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "C",
+        "suffix": null
+      }
+    },
+    {
+      "id": "commandcode.monthlyCredits",
+      "label": "Monthly remaining",
+      "source": {
+        "kind": "value",
+        "sourceId": "monthlyCredits"
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "onDemand",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "C",
+        "suffix": null
+      }
+    },
+    {
+      "id": "commandcode.purchasedCredits",
+      "label": "Purchased credits",
+      "source": {
+        "kind": "value",
+        "sourceId": "purchasedCredits"
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "onDemand",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "C",
+        "suffix": null
+      }
+    },
+    {
+      "hideWhenMissing": true,
+      "id": "commandcode.fiveHour",
+      "label": "5-hour",
+      "source": {
+        "kind": "quota",
+        "sourceId": "fiveHour",
+        "sessionWindow": true
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "alwaysVisible",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "W",
+        "suffix": null
+      }
+    },
+    {
+      "hideWhenMissing": true,
+      "id": "commandcode.weekly",
+      "label": "Weekly",
+      "source": {
+        "kind": "quota",
+        "sourceId": "weekly",
+        "sessionWindow": false
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "alwaysVisible",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "W",
+        "suffix": null
+      }
+    },
+    {
+      "id": "commandcode.daysLeft",
+      "label": "Days to renewal",
+      "source": {
+        "kind": "status",
+        "sourceId": "daysLeft"
+      },
+      "pinnable": true,
+      "defaultEnabled": true,
+      "defaultSection": "alwaysVisible",
+      "defaultPinned": false,
+      "tray": {
+        "shortLabel": "D",
+        "suffix": null
+      }
+    }
+  ]
+}

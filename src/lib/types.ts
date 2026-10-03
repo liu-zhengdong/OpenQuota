@@ -113,6 +113,7 @@ export interface TrayMetricDefinition {
 }
 
 export interface MetricDefinition {
+  hideWhenMissing?: boolean;
   id: string;
   label: string;
   source: MetricSource;
