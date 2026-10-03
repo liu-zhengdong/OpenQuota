@@ -56,7 +56,7 @@ impl ZaiClient {
         let response = self
             .client
             .get(url)
-            .bearer_auth(api_key)
+            .header("Authorization", api_key)
             .header("Accept", "application/json")
             .send()
             .map_err(|_| {
@@ -86,6 +86,57 @@ impl ZaiClient {
 #[cfg(test)]
 mod tests {
     use super::{QUOTA_URL, SUBSCRIPTION_URL};
+
+    #[test]
+    fn quota_request_uses_official_raw_authorization_and_get_only() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+            time::{Duration, Instant},
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!(
+            "http://{}/api/monitor/usage/quota/limit",
+            listener.local_addr().unwrap()
+        );
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    let mut bytes = [0_u8; 4096];
+                    let length = stream.read(&mut bytes).unwrap();
+                    let request = String::from_utf8_lossy(&bytes[..length]).to_lowercase();
+                    let valid = request.starts_with("get /api/monitor/usage/quota/limit http/1.1")
+                        && request.contains("authorization: synthetic-key\r\n")
+                        && !request.contains("bearer");
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                        )
+                        .unwrap();
+                    return valid;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "fake HTTP request deadline exceeded"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let response = super::ZaiClient::for_test(&url, &url, Duration::from_secs(1))
+            .fetch_quota("synthetic-key")
+            .unwrap();
+        assert!(response.status.is_success());
+        assert!(
+            server.join().unwrap(),
+            "wrong request method or authorization scheme"
+        );
+    }
 
     #[test]
     fn production_channel_is_international_plan_usage_not_inference_or_balance() {

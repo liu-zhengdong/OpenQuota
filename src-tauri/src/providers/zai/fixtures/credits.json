@@ -1,0 +1,28 @@
+{
+  "code": 200,
+  "success": true,
+  "data": {
+    "limits": [
+      {
+        "type": "CREDIT_LIMIT",
+        "unit": 3,
+        "number": 5,
+        "currentValue": "11952.123456",
+        "usage": "12000",
+        "remaining": "47.876544",
+        "percentage": 99.6010288,
+        "nextResetTime": 1791028800000
+      },
+      {
+        "type": "CREDIT_LIMIT",
+        "unit": 6,
+        "number": 1,
+        "currentValue": "12345.678901",
+        "usage": "60000",
+        "remaining": null,
+        "percentage": 20.57613150166667,
+        "nextResetTime": null
+      }
+    ]
+  }
+}

@@ -6,7 +6,7 @@ use std::{
 use chrono::{DateTime, Duration, Utc};
 
 use crate::models::{
-    AppSettings, MetricSource, NotificationPreferences, ProviderSnapshot, QuotaFormat, QuotaWindow,
+    AppSettings, MetricSource, NotificationPreferences, ProviderSnapshot, QuotaWindow,
 };
 use crate::providers::ProviderRegistry;
 
@@ -94,14 +94,11 @@ pub fn project(window: &QuotaWindow, now: DateTime<Utc>) -> PaceProjection {
 }
 
 fn is_visibly_spent(window: &QuotaWindow, used_percent: f64) -> bool {
-    if window.format == QuotaFormat::Dollars {
-        if let (Some(used), Some(limit)) = (window.used_value, window.limit_value) {
-            if limit > 0.0 {
-                return ((limit - used) * 100.0).round() / 100.0 <= 0.0;
-            }
-        }
-    }
-    (100.0 - used_percent).round() <= 0.0
+    // Match the View: source remaining outranks display rounding or a local difference.
+    window
+        .remaining_value
+        .filter(|value| value.is_finite())
+        .map_or(used_percent >= 100.0, |value| value <= 0.0)
 }
 
 fn level_projection(_used: f64) -> PaceProjection {
@@ -499,7 +496,7 @@ mod tests {
         let elapsed = period_elapsed_percent(&ready, now).unwrap();
         assert!((elapsed - 1.5).abs() < 0.001);
 
-        // Spent windows stop reporting elapsed time, in both formats.
+        // Without a reset timestamp, elapsed time is unknown in every format.
         let dollars = QuotaWindow {
             format: crate::models::QuotaFormat::Dollars,
             used_value: Some(9.996),
@@ -561,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_usage_and_display_precision_match_the_visible_row() {
+    fn exhaustion_uses_source_remaining_not_display_precision_or_differences() {
         let now = Utc.timestamp_opt(1_800_000_000, 0).unwrap();
         for used in [-0.1, 0.0] {
             let projection = project(&window(used, 0.5), now);
@@ -574,15 +571,32 @@ mod tests {
             project(&window(99.5, 0.5), now).severity,
             PaceSeverity::Spent
         );
-        assert_eq!(
+        assert_ne!(
             project(&window(99.51, 0.5), now).severity,
             PaceSeverity::Spent
         );
+        assert_eq!(
+            project(&window(100.0, 0.5), now).severity,
+            PaceSeverity::Spent
+        );
+        let mut credits = window(99.6, 0.5);
+        credits.format = crate::models::QuotaFormat::Count;
+        for remaining in [48.0, 0.4, 0.0001] {
+            credits.remaining_value = Some(remaining);
+            assert_ne!(project(&credits, now).severity, PaceSeverity::Spent);
+        }
+        credits.remaining_value = Some(0.0);
+        assert_eq!(project(&credits, now).severity, PaceSeverity::Spent);
+        credits.used_percent = 100.0;
+        credits.remaining_value = Some(0.4);
+        assert_ne!(project(&credits, now).severity, PaceSeverity::Spent);
 
         let mut dollars = window(99.0, 0.5);
         dollars.format = crate::models::QuotaFormat::Dollars;
         dollars.used_value = Some(9.996);
         dollars.limit_value = Some(10.0);
+        assert_ne!(project(&dollars, now).severity, PaceSeverity::Spent);
+        dollars.remaining_value = Some(0.0);
         assert_eq!(project(&dollars, now).severity, PaceSeverity::Spent);
     }
 

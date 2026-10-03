@@ -297,31 +297,6 @@ fn tray_metric(
             .iter()
             .find(|quota| quota.id == id)
             .map(|quota| {
-                if quota.format == QuotaFormat::Count {
-                    if let (Some(used), Some(limit)) = (quota.used_value, quota.limit_value) {
-                        let used_fraction = (limit > 0.0).then(|| (used / limit).clamp(0.0, 1.0));
-                        let value = match display {
-                            UsageDisplay::Used => used,
-                            UsageDisplay::Left => (limit - used).max(0.0),
-                        };
-                        let word = match display {
-                            UsageDisplay::Used => "used",
-                            UsageDisplay::Left => "left",
-                        };
-                        let unit = quota.unit.as_deref().unwrap_or("requests");
-                        return TrayMetric {
-                            value: format!("{value:.0}"),
-                            detail: format!("{} {value:.0} {unit} {word}", quota.label),
-                            gauge: used_fraction.map(|used_fraction| TrayGauge {
-                                display_fraction: match display {
-                                    UsageDisplay::Used => used_fraction,
-                                    UsageDisplay::Left => 1.0 - used_fraction,
-                                },
-                                remaining_fraction: 1.0 - used_fraction,
-                            }),
-                        };
-                    }
-                }
                 let used_fraction = (quota.used_percent / 100.0).clamp(0.0, 1.0);
                 let display_fraction = match display {
                     UsageDisplay::Used => used_fraction,
@@ -332,9 +307,42 @@ fn tray_metric(
                     UsageDisplay::Used => "used",
                     UsageDisplay::Left => "left",
                 };
+                let source_value = match display {
+                    UsageDisplay::Used => quota.used_value,
+                    UsageDisplay::Left => quota.remaining_value,
+                }
+                .filter(|value| value.is_finite());
+                let (value, detail) = if let Some(value) =
+                    source_value.filter(|_| quota.format == QuotaFormat::Count)
+                {
+                    let unit = quota.unit.as_deref().unwrap_or("unknown unit");
+                    (
+                        value.to_string(),
+                        format!("{} {value} {unit} {word}", quota.label),
+                    )
+                } else {
+                    // Do not round a nonzero remainder to 0% (or partial usage to 100%).
+                    let rounded = percent.round();
+                    let value =
+                        if percent > 0.0 && percent < 100.0 && (rounded == 0.0 || rounded == 100.0)
+                        {
+                            // Mirrors Number(percent.toPrecision(12)) in quotaReading.ts.
+                            // Significant digits remove arithmetic noise without zeroing tiny values.
+                            format!("{percent:.11e}")
+                                .parse::<f64>()
+                                .unwrap_or(percent)
+                                .to_string()
+                        } else {
+                            format!("{percent:.0}")
+                        };
+                    (
+                        format!("{value}%"),
+                        format!("{} {value}% {word}", quota.label),
+                    )
+                };
                 TrayMetric {
-                    value: format!("{percent:.0}%"),
-                    detail: format!("{} {percent:.0}% {word}", quota.label),
+                    value,
+                    detail,
                     gauge: Some(TrayGauge {
                         display_fraction,
                         remaining_fraction: 1.0 - used_fraction,
@@ -445,7 +453,8 @@ mod tests {
     use crate::{
         models::{
             MetricDefinition, MetricSection, MetricValue, MetricValueKind, ProviderSnapshot,
-            ProviderViewState, QuotaWindow, SnapshotSource, StatusMetric, StatusTone, ValueMetric,
+            ProviderViewState, QuotaWindow, SnapshotSource, StatusMetric, StatusTone, UsageDisplay,
+            ValueMetric,
         },
         providers::{codex, cursor, ProviderRegistry},
         settings::default_settings,
@@ -453,8 +462,8 @@ mod tests {
 
     use super::{
         bar_fractions, compact_groups, format_count, mac_menu_bar_presentation, primary_gauge,
-        resolved_groups, text_groups, MacMenuBarIcon, MacMenuBarPresentation, TrayGauge, TrayGroup,
-        TrayMetric,
+        resolved_groups, text_groups, tray_metric, MacMenuBarIcon, MacMenuBarPresentation,
+        TrayGauge, TrayGroup, TrayMetric,
     };
     use crate::service::UsageViewState;
     use crate::{menu_bar::CompactGroup, quota_tier::QuotaTier};
@@ -667,6 +676,88 @@ mod tests {
     }
 
     #[test]
+    fn credit_readings_keep_source_remaining_zero_and_decimal_precision() {
+        let snapshot: ProviderSnapshot = serde_json::from_value(serde_json::json!({
+            "providerId": "zai", "plan": null,
+            "quotas": [{"id":"session", "label":"Session", "format":"count",
+                "usedPercent":40.0, "usedValue":40.0, "limitValue":100.0,
+                "remainingValue":50.0, "unit":"credits", "periodSeconds":18000}],
+            "valueMetrics":[], "statusMetrics":[], "notices":[], "warnings":[],
+            "refreshedAt":"2026-10-03T00:00:00Z", "remembered":false
+        }))
+        .unwrap();
+        let registry = ProviderRegistry::from_definitions(vec![
+            codex::definition(),
+            crate::providers::zai::definition(),
+        ])
+        .unwrap();
+        let definition = registry.metric("zai.session").unwrap();
+        for (remaining, expected) in [
+            (Some(50.0), "50"),
+            (Some(0.0), "0"),
+            (Some(0.4), "0.4"),
+            (Some(0.12345678), "0.12345678"),
+            (None, "60%"),
+        ] {
+            let mut snapshot = snapshot.clone();
+            snapshot.quotas[0].remaining_value = remaining;
+            let metric = tray_metric(&definition, &snapshot, UsageDisplay::Left).unwrap();
+            assert_eq!(metric.value, expected);
+            if remaining.is_some() {
+                assert_eq!(metric.detail, format!("Session {expected} credits left"));
+            }
+            assert_eq!(metric.gauge.unwrap().remaining_fraction, 0.6);
+        }
+        let mut only_remaining = snapshot;
+        only_remaining.quotas[0].used_value = None;
+        only_remaining.quotas[0].limit_value = None;
+        assert_eq!(
+            tray_metric(&definition, &only_remaining, UsageDisplay::Left)
+                .unwrap()
+                .value,
+            "50"
+        );
+    }
+
+    #[test]
+    fn boundary_percentages_remove_float_noise_without_rounding_away_remainders() {
+        let registry = ProviderRegistry::from_definitions(vec![
+            codex::definition(),
+            crate::providers::zai::definition(),
+        ])
+        .unwrap();
+        let definition = registry.metric("zai.session").unwrap();
+        let mut snapshot: ProviderSnapshot = serde_json::from_value(serde_json::json!({
+            "providerId":"zai", "plan":null,
+            "quotas":[{"id":"session", "label":"Session", "format":"count",
+                "usedPercent":99.6, "remainingValue":null, "periodSeconds":18000}],
+            "valueMetrics":[], "statusMetrics":[], "notices":[], "warnings":[],
+            "refreshedAt":"2026-10-03T00:00:00Z", "remembered":false
+        }))
+        .unwrap();
+        let left = tray_metric(&definition, &snapshot, UsageDisplay::Left).unwrap();
+        assert_eq!(left.value, "0.4%");
+        assert_eq!(left.detail, "Session 0.4% left");
+        assert_eq!(
+            tray_metric(&definition, &snapshot, UsageDisplay::Used)
+                .unwrap()
+                .value,
+            "99.6%"
+        );
+        for used_percent in [99.99999999, 1e-20] {
+            snapshot.quotas[0].used_percent = used_percent;
+            let display = if used_percent < 1.0 {
+                UsageDisplay::Used
+            } else {
+                UsageDisplay::Left
+            };
+            let metric = tray_metric(&definition, &snapshot, display).unwrap();
+            let value: f64 = metric.value.trim_end_matches('%').parse().unwrap();
+            assert!(value > 0.0 && value < 1.0, "{}", metric.value);
+        }
+    }
+
+    #[test]
     fn pinned_quota_metrics_resolve_in_layout_order() {
         let snapshot = ProviderSnapshot {
             provider_id: "codex".into(),
@@ -808,8 +899,8 @@ mod tests {
         let used =
             super::tray_metric(&definition, &snapshot, crate::models::UsageDisplay::Used).unwrap();
 
-        assert_eq!(left.value, "75");
-        assert_eq!(left.detail, "Requests 75 searches left");
+        assert_eq!(left.value, "75%");
+        assert_eq!(left.detail, "Requests 75% left");
         assert_eq!(used.value, "25");
         assert_eq!(used.detail, "Requests 25 searches used");
         assert_eq!(

@@ -122,6 +122,7 @@ describe('quota pacing presentation', () => {
       format: 'count',
       usedValue: 120,
       limitValue: 500,
+      remainingValue: 380,
       unit: 'searches',
     });
     expect(screen.getByRole('button', { name: '380 searches left' })).toHaveAttribute(
@@ -131,9 +132,75 @@ describe('quota pacing presentation', () => {
   });
 
   it('keeps a missing count unit unknown', () => {
-    show({ ...quota(24), format: 'count', usedValue: 120, limitValue: 500, unit: null });
+    show({
+      ...quota(24),
+      format: 'count',
+      usedValue: 120,
+      limitValue: 500,
+      remainingValue: 380,
+      unit: null,
+    });
     expect(screen.getByRole('button', { name: '380 (unit unknown) left' })).toBeInTheDocument();
     expect(screen.queryByText(/requests left/)).not.toBeInTheDocument();
+  });
+
+  it.each([50, 0, 0.4, 0.123456789])(
+    'shows source remaining %s, not a local difference',
+    (remainingValue) => {
+      show({
+        ...quota(40),
+        format: 'count',
+        usedValue: 40,
+        limitValue: 100,
+        remainingValue,
+        unit: 'credits',
+      });
+      expect(
+        screen.getByRole('button', { name: `${remainingValue} credits left` }),
+      ).toHaveAttribute('data-tooltip', '40 credits used');
+      expect(screen.queryByRole('button', { name: '60 credits left' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('keeps remaining-only values and falls back to percent for missing absolute remaining', () => {
+    const first = show({
+      ...quota(40),
+      format: 'count',
+      usedValue: null,
+      limitValue: null,
+      remainingValue: 50,
+      unit: 'credits',
+    });
+    expect(screen.getByRole('button', { name: '50 credits left' })).toHaveAttribute(
+      'data-tooltip',
+      '40% used',
+    );
+    first.unmount();
+    show({
+      ...quota(40),
+      format: 'count',
+      usedValue: 40,
+      limitValue: 100,
+      remainingValue: null,
+      unit: 'credits',
+    });
+    expect(screen.getByRole('button', { name: '60% left' })).toBeInTheDocument();
+    expect(screen.queryByText('60 credits left')).not.toBeInTheDocument();
+  });
+
+  it.each([48, 0])('only marks actual zero remaining as spent (%s)', (remainingValue) => {
+    show({
+      ...quota(99.6),
+      format: 'count',
+      usedValue: 11952,
+      limitValue: 12000,
+      remainingValue,
+      unit: 'credits',
+    });
+    expect(
+      screen.getByRole('button', { name: `${remainingValue} credits left` }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Limit reached') !== null).toBe(remainingValue === 0);
   });
 
   it('marks inferred quotas with their source note', () => {

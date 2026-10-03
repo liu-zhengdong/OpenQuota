@@ -12,7 +12,7 @@ export interface PaceProjection {
 
 export function projectPace(window: QuotaWindow, now: number): PaceProjection {
   const used = clamp(window.usedPercent, 0, 100);
-  if (isVisiblySpent(window, used)) {
+  if (isSpent(window, used)) {
     return { severity: 'spent', projectedUsedPercent: 100, evenPacePercent: null, runOutAt: now };
   }
   if (used <= 0) return level();
@@ -52,11 +52,13 @@ export function projectPace(window: QuotaWindow, now: number): PaceProjection {
 }
 
 /**
- * Window used to compare a provider against an even pace: the weekly percent
- * window when one exists, otherwise the percent window with the longest period.
+ * Prefer the weekly quota, then the longest period. Formatting is presentation:
+ * timed absolute quotas carry percentages too; retain legacy percent windows.
  */
 export function selectComparisonWindow(windows: QuotaWindow[]): QuotaWindow | null {
-  const percent = windows.filter((window) => window.format === 'percent');
+  const percent = windows.filter(
+    (window) => window.format === 'percent' || window.periodSeconds > 0,
+  );
   const weekly = percent.filter(
     (window) =>
       window.id.toLowerCase().includes('week') || window.label.toLowerCase().includes('week'),
@@ -231,16 +233,9 @@ function level(): PaceProjection {
   return { severity: 'level', projectedUsedPercent: null, evenPacePercent: null, runOutAt: null };
 }
 
-function isVisiblySpent(window: QuotaWindow, usedPercent: number) {
-  if (
-    window.format === 'dollars' &&
-    window.usedValue !== null &&
-    window.limitValue !== null &&
-    window.limitValue > 0
-  ) {
-    return Math.round((window.limitValue - window.usedValue) * 100) / 100 <= 0;
-  }
-  return Math.round(100 - usedPercent) <= 0;
+function isSpent(window: QuotaWindow, usedPercent: number) {
+  if (window.remainingValue != null) return window.remainingValue <= 0;
+  return usedPercent >= 100;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {

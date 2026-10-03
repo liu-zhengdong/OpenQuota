@@ -16,10 +16,10 @@ use crate::models::{
 use self::{
     auth::ZaiAuthStore,
     client::{ZaiClient, ZaiResponse},
-    mapper::{is_no_coding_plan, map_usage},
+    mapper::is_no_coding_plan,
 };
 
-use super::{ProviderError, UsageProvider};
+use super::{ProviderError, ProviderRefresh, UsageProvider};
 
 pub(crate) fn definition() -> ProviderDefinition {
     ProviderDefinition {
@@ -133,19 +133,19 @@ impl ZaiProvider {
         if is_no_coding_plan(&quota.body) {
             return Err(ZaiError::NoCodingPlan.into());
         }
+        // Validate usage before fetching optional metadata or advancing refreshed_at.
+        let quotas = mapper::map_quota(&quota.body)?;
         let subscription = self
             .client
             .fetch_subscription(api_key)
             .ok()
             .filter(|response| response.status.is_success());
-        let mapped = map_usage(
-            &quota.body,
-            subscription.as_ref().map(|response| &response.body),
-        )?;
         Ok(ProviderSnapshot {
             provider_id: "zai".into(),
-            plan: mapped.plan,
-            quotas: mapped.quotas,
+            plan: subscription
+                .as_ref()
+                .and_then(|response| mapper::plan_name(&response.body)),
+            quotas,
             value_metrics: Vec::new(),
             status_metrics: Vec::new(),
             notices: Vec::new(),
@@ -168,12 +168,31 @@ impl UsageProvider for ZaiProvider {
     }
 
     fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+        self.refresh_for_service().map(|refresh| refresh.snapshot)
+    }
+
+    fn refresh_for_service(&self) -> Result<ProviderRefresh, ProviderError> {
         let api_key = self
             .auth
             .load()
             .map_err(ProviderError::from)?
             .ok_or_else(|| ProviderError::from(ZaiError::MissingKey))?;
-        self.refresh_snapshot(api_key.as_str())
+        let snapshot = self.refresh_snapshot(api_key.as_str())?;
+        // Cache binding only: a credential fingerprint does not identify an account or pool.
+        let digest = crate::hashing::sha256_hex(
+            format!("zai:api.z.ai:credential:{}", api_key.as_str()).as_bytes(),
+        );
+        Ok(ProviderRefresh {
+            snapshot,
+            cache_identity: Some(format!("zai:credential:{digest}")),
+            account: None,
+        })
+    }
+
+    fn cache_identity(&self) -> super::CacheIdentity<'_> {
+        // The cache has credential bindings, but no verified current account identity.
+        // Retain prior facts on startup as unknown, never relabel them for a new key.
+        super::CacheIdentity::Unresolved
     }
 
     fn api_key_status(&self) -> Option<Result<ApiKeyStatus, ProviderError>> {
@@ -223,7 +242,10 @@ mod tests {
         },
     };
 
-    use super::{auth::ZaiAuthStore, client::ZaiClient, definition, ZaiProvider};
+    use super::{
+        auth::ZaiAuthStore, client::ZaiClient, definition, ProviderDefinition, ProviderError,
+        ProviderSnapshot, ZaiProvider,
+    };
 
     #[derive(Default)]
     struct MemorySecrets(Mutex<HashMap<String, Vec<u8>>>);
@@ -327,6 +349,127 @@ mod tests {
     }
 
     #[test]
+    fn credits_refresh_binds_only_the_used_credential_and_exports_actual_snapshot() {
+        let refresh = provider(
+            Some("synthetic-a"),
+            200,
+            include_str!("fixtures/credits.json"),
+            200,
+            include_str!("fixtures/subscription.json"),
+        )
+        .refresh_for_service()
+        .unwrap();
+        assert!(refresh
+            .cache_identity
+            .as_deref()
+            .unwrap()
+            .starts_with("zai:credential:"));
+        assert!(!refresh
+            .cache_identity
+            .as_deref()
+            .unwrap()
+            .contains("synthetic-a"));
+        assert_eq!(refresh.snapshot.quotas.len(), 2);
+        assert_eq!(refresh.snapshot.quotas[0].unit.as_deref(), Some("credits"));
+        assert!(refresh.snapshot.account_identity.is_none());
+        assert!(refresh.snapshot.shared_scope.is_none());
+        assert!(refresh.account.is_none());
+        let other = provider(
+            Some("synthetic-b"),
+            200,
+            include_str!("fixtures/credits.json"),
+            200,
+            "{}",
+        )
+        .refresh_for_service()
+        .unwrap();
+        assert_ne!(refresh.cache_identity, other.cache_identity);
+        if let Ok(path) = std::env::var("ZAI_CREDITS_OUTPUT") {
+            std::fs::write(
+                path,
+                serde_json::to_string_pretty(
+                    &serde_json::json!({"snapshot":refresh.snapshot,"definition":definition()}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_envelope_preserves_cached_success_time_and_credential_binding() {
+        use crate::{
+            providers::{CacheIdentity, ProviderRegistry},
+            service::ProviderService,
+            storage::Storage,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(Storage::open(&dir.path().join("openquota.db")).unwrap());
+        let first = provider(
+            Some("synthetic-a"),
+            200,
+            include_str!("fixtures/credits.json"),
+            200,
+            "{}",
+        )
+        .refresh_for_service()
+        .unwrap();
+        storage
+            .save_snapshot_for_identity(&first.snapshot, first.cache_identity.as_deref())
+            .unwrap();
+        // Use the real service and real reader with a fake HTTP endpoint, not a new test runtime.
+        let failing = provider(
+            Some("synthetic-b"),
+            200,
+            r#"{"success":false,"code":500,"msg":"internal error","data":{"limits":[]}}"#,
+            200,
+            "{}",
+        );
+        struct Fallback;
+        impl UsageProvider for Fallback {
+            fn definition(&self) -> ProviderDefinition {
+                crate::providers::codex::definition()
+            }
+            fn has_local_credentials(&self) -> bool {
+                false
+            }
+            fn refresh(&self) -> Result<ProviderSnapshot, ProviderError> {
+                unreachable!("only zai is refreshed")
+            }
+        }
+        let registry =
+            Arc::new(ProviderRegistry::new(vec![Arc::new(failing), Arc::new(Fallback)]).unwrap());
+        let service = Arc::new(ProviderService::new(registry, storage.clone()));
+        let state = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), service.refresh("zai", true))
+                .await
+                .unwrap()
+        });
+        assert_eq!(state.error_kind, Some(ProviderErrorKind::InvalidResponse));
+        assert_eq!(
+            state.cache_identity_match,
+            crate::providers::identity::CacheIdentityMatch::Unknown
+        );
+        assert!(state.last_attempt_at.is_some());
+        let old = state.snapshot.unwrap();
+        assert_eq!(old.refreshed_at, first.snapshot.refreshed_at);
+        assert_eq!(old.quotas, first.snapshot.quotas);
+        assert!(old.account_identity.is_none());
+        let cached = storage
+            .load_snapshot_for_identity(
+                "zai",
+                CacheIdentity::Resolved(first.cache_identity.as_deref().unwrap()),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.refreshed_at, first.snapshot.refreshed_at);
+        assert!(storage
+            .load_snapshot_for_identity("zai", CacheIdentity::Resolved("zai:credential:not-a"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn exhausted_and_unknown_limits_do_not_become_available_capacity() {
         let exhausted = provider(
             Some("synthetic-key"),
@@ -352,9 +495,8 @@ mod tests {
             "{}",
         )
         .refresh()
-        .unwrap();
-        assert!(unknown.quotas.is_empty());
-        assert_eq!(unknown.plan, None);
+        .unwrap_err();
+        assert_eq!(unknown.kind(), ProviderErrorKind::InvalidResponse);
     }
 
     #[test]
