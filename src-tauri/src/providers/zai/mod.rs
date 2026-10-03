@@ -58,13 +58,13 @@ pub(crate) fn definition() -> ProviderDefinition {
             ),
             MetricDefinition::quota(
                 "zai.webSearches",
-                "Web Searches",
+                "MCP Usage",
                 "webSearches",
                 false,
                 true,
                 MetricSection::OnDemand,
                 false,
-                "Search",
+                "MCP",
             ),
         ],
     }
@@ -310,9 +310,51 @@ mod tests {
             ["session", "weekly", "webSearches"]
         );
         assert_eq!(snapshot.quotas[2].format, QuotaFormat::Count);
-        assert_eq!(snapshot.quotas[2].unit.as_deref(), Some("searches"));
+        assert_eq!(snapshot.quotas[2].unit, None);
+        assert_eq!(snapshot.quotas[2].remaining_value, Some(1000.0));
         assert!(snapshot.status_metrics.is_empty());
         assert!(snapshot.warnings.is_empty());
+        if let Ok(path) = std::env::var("ZAI_FIXTURE_OUTPUT") {
+            std::fs::write(
+                path,
+                serde_json::to_string(&serde_json::json!({
+                    "snapshot": snapshot, "definition": definition()
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn exhausted_and_unknown_limits_do_not_become_available_capacity() {
+        let exhausted = provider(
+            Some("synthetic-key"),
+            200,
+            r#"{"data":{"limits":[
+                {"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":100},
+                {"type":"TIME_LIMIT","usage":1000,"currentValue":1000,"remaining":0,"percentage":100}
+            ]}}"#,
+            200,
+            "{}",
+        ).refresh().unwrap();
+        assert_eq!(exhausted.quotas.len(), 2);
+        assert!(exhausted.quotas.iter().all(|q| q.used_percent == 100.0));
+        assert_eq!(exhausted.quotas[1].remaining_value, Some(0.0));
+        assert_eq!(exhausted.quotas[1].unit, None);
+        assert_eq!(exhausted.quotas[0].resets_at, None);
+
+        let unknown = provider(
+            Some("synthetic-key"),
+            200,
+            r#"{"data":{"limits":[{"type":"FUTURE_LIMIT"}]}}"#,
+            200,
+            "{}",
+        )
+        .refresh()
+        .unwrap();
+        assert!(unknown.quotas.is_empty());
+        assert_eq!(unknown.plan, None);
     }
 
     #[test]

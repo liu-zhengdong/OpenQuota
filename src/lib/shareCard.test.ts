@@ -124,6 +124,24 @@ describe('share card layout', () => {
     expect(rows[0]).toMatchObject({ kind: 'quota', reading: '75 searches left' });
   });
 
+  it('keeps unknown count units in shared rows', () => {
+    const snapshot = structuredClone(codexState.snapshot!);
+    Object.assign(snapshot.quotas[0], {
+      format: 'count',
+      usedValue: 25,
+      limitValue: 100,
+      unit: null,
+    });
+    const rows = buildProviderShareRows(
+      'codex',
+      snapshot,
+      settingsState.settings.providers[0],
+      settingsState.settings,
+      Date.now(),
+    );
+    expect(rows[0]).toMatchObject({ kind: 'quota', reading: '75 (unit unknown) left' });
+  });
+
   it('omits pacing copy for an unused non-session quota', () => {
     const now = Date.parse('2026-08-12T12:00:00Z');
     const snapshot = structuredClone(codexState.snapshot!);

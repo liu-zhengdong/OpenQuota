@@ -655,11 +655,10 @@ fn validate_snapshot(
                 .map(|metric| metric.id.as_str()),
         )
         || snapshot.quotas.iter().any(|quota| {
-            (quota.format == crate::models::QuotaFormat::Count
-                && quota
-                    .unit
-                    .as_deref()
-                    .is_none_or(|unit| unit.trim().is_empty()))
+            quota
+                .unit
+                .as_deref()
+                .is_some_and(|unit| unit.trim().is_empty())
                 || (quota.estimated
                     && quota
                         .source_note
@@ -1272,6 +1271,10 @@ mod tests {
         });
 
         assert!(validate_snapshot(&registry, "dynamic", snapshot.clone()).is_ok());
+
+        let mut unknown_unit = snapshot.clone();
+        unknown_unit.quotas[0].unit = None;
+        assert!(validate_snapshot(&registry, "dynamic", unknown_unit).is_ok());
 
         let mut missing_unit = snapshot.clone();
         missing_unit.quotas[0].unit = Some(" ".into());

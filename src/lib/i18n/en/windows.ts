@@ -19,7 +19,7 @@ export const windows = {
   geminiWeekly: 'Weekly',
   claude: 'Claude',
   claudeWeekly: 'Claude Weekly',
-  webSearches: 'Web Searches',
+  webSearches: 'MCP Usage',
   extraUsageBalance: 'Extra Usage Balance',
   extraBalance: 'Extra Balance',
   payAsYouGo: 'Extra Usage',
