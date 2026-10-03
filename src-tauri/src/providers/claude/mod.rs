@@ -761,6 +761,11 @@ impl crate::providers::UsageProvider for ClaudeProvider {
     }
 }
 
+/// Read only existing account facts; never inspects a credential fingerprint or keychain.
+pub(crate) fn observed_account_identity() -> Option<String> {
+    accounts::identity_for_scope(&auth::ClaudeCredentialScope::Standard)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1235,9 +1240,4 @@ mod tests {
         assert!(matches!(error, ClaudeError::AccountChanged));
         assert_eq!(authorization, "Bearer account-a");
     }
-}
-
-/// Read only existing account facts; never inspects a credential fingerprint or keychain.
-pub(crate) fn observed_account_identity() -> Option<String> {
-    accounts::identity_for_scope(&auth::ClaudeCredentialScope::Standard)
 }

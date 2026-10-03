@@ -376,6 +376,10 @@ impl crate::providers::UsageProvider for CodexProvider {
     }
 }
 
+pub(crate) fn observed_account_identity() -> Option<String> {
+    CodexAuthState::observed_account_identity().map(|identity| account_identity_key(&identity))
+}
+
 #[cfg(test)]
 mod account_tests {
 
@@ -420,8 +424,4 @@ mod account_tests {
             CacheIdentity::Unresolved
         );
     }
-}
-
-pub(crate) fn observed_account_identity() -> Option<String> {
-    CodexAuthState::observed_account_identity().map(|identity| account_identity_key(&identity))
 }

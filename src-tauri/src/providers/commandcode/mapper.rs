@@ -88,17 +88,11 @@ pub fn map_usage(
         .subscription
         .get("data")
         .ok_or(CommandCodeError::InvalidResponse)?;
-    let active = matches!(
-        subscription.get("status").and_then(Value::as_str),
-        Some("active")
-    );
     let plan_id = subscription
         .get("planId")
         .and_then(Value::as_str)
         .or_else(|| credits.get("planId").and_then(Value::as_str));
-    let plan_name = plan_id
-        .map(str::to_owned)
-        .or_else(|| (!active).then(|| "Free".into()));
+    let plan_name = plan_id.map(str::to_owned);
     let remaining = monthly + purchased + free;
     if !remaining.is_finite() {
         return Err(CommandCodeError::InvalidResponse);

@@ -57,7 +57,7 @@ fn free_account_zero_balance_and_unknown_windows_do_not_invent_data() {
     data.subscription = json!({"data":null});
     data.credits = json!({"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":2},"windowLimits":{"unknown":true}});
     let snapshot = map_usage(&data, now()).unwrap();
-    assert_eq!(snapshot.plan.as_deref(), Some("Free"));
+    assert_eq!(snapshot.plan, None);
     assert!(snapshot.quotas.is_empty());
     assert!(snapshot.status_metrics.is_empty());
     data.credits["credits"]["freeCredits"] = json!(0);
@@ -176,7 +176,7 @@ fn check_routes(has_org: bool) {
             } else if request.contains("/alpha/billing/subscriptions?") {
                 SUBSCRIPTION
             } else {
-                SUBSCRIPTION
+                panic!("unexpected endpoint: {request}")
             };
             captured.lock().unwrap().push(request);
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
