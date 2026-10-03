@@ -382,7 +382,13 @@ describe('OpenQuota dashboard', () => {
     render(App);
     expect(await screen.findByRole('heading', { name: 'Claude' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Antigravity' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '$37.50 left' })).toBeInTheDocument();
+    // This source has used/limit dollars but no measured remaining: never invent $37.50.
+    const extraRow = screen.getByRole('region', { name: 'Extra Usage quota' });
+    expect(within(extraRow).getByRole('button', { name: '75% left' })).toHaveAttribute(
+      'data-tooltip',
+      '$12.5 spent',
+    );
+    expect(screen.queryByRole('button', { name: '$37.50 left' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('progressbar')).toHaveLength(6);
   });
 
