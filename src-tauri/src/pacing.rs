@@ -416,6 +416,7 @@ mod tests {
             format: crate::models::QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -464,6 +465,7 @@ mod tests {
             format: crate::models::QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -502,6 +504,7 @@ mod tests {
             format: crate::models::QuotaFormat::Dollars,
             used_value: Some(9.996),
             limit_value: Some(10.0),
+            remaining_value: None,
             ..frontend_window_at(99.0, None)
         };
         for window in [
@@ -809,6 +812,7 @@ mod tests {
                 format: crate::models::QuotaFormat::Percent,
                 used_value: None,
                 limit_value: None,
+                remaining_value: None,
                 unit: None,
                 estimated: false,
                 source_note: None,
@@ -819,6 +823,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let evaluator = NotificationEvaluator::default();
 
@@ -902,6 +908,7 @@ mod tests {
                 format: crate::models::QuotaFormat::Percent,
                 used_value: None,
                 limit_value: None,
+                remaining_value: None,
                 unit: None,
                 estimated: false,
                 source_note: None,
@@ -912,6 +919,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: now,
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         let evaluator = NotificationEvaluator::default();
 

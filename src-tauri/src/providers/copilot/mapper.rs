@@ -182,8 +182,7 @@ fn snapshot_quota(
 ) -> Option<QuotaWindow> {
     let snapshot = value.as_object()?;
     let entitlement = number(snapshot.get("entitlement"));
-    let remaining =
-        number(snapshot.get("remaining")).or_else(|| number(snapshot.get("quota_remaining")));
+    let remaining = number(value.get("remaining")).or_else(|| number(value.get("quota_remaining")));
     if bool_value(snapshot.get("unlimited")) == Some(true)
         || entitlement == Some(-1.0)
         || remaining == Some(-1.0)
@@ -226,6 +225,8 @@ fn snapshot_quota(
         format,
         used_value,
         limit_value,
+        remaining_value: number(value.get("remaining"))
+            .or_else(|| number(value.get("quota_remaining"))),
         unit,
         estimated: false,
         source_note: None,
@@ -273,6 +274,7 @@ fn legacy_quota(
         format: QuotaFormat::Count,
         used_value: Some(used),
         limit_value: Some(total),
+        remaining_value: None,
         unit: Some(unit.into()),
         estimated: false,
         source_note: None,

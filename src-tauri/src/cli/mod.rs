@@ -24,7 +24,7 @@ use serde::Deserialize;
 use crate::{
     i18n::{resolve_ui_locale, system_language_tag},
     instance_lock,
-    models::{ProviderSnapshot, QuotaFormat, QuotaWindow, UiLanguagePreference},
+    models::{ProviderSnapshot, UiLanguagePreference},
 };
 
 use freshness::RefreshOutcome;
@@ -59,7 +59,8 @@ Usage: openquota pace [--json] [--db <path>]
 Prints the latest quotas of the providers turned on in the OpenQuota panel.
 
 Without --refresh it only reads the local OpenQuota database, opened read-only:
-no GUI, no network access, and no writes.
+no GUI, no network access, and no writes. Account matching reuses local Claude
+noncredential account facts when readable; database identity alone remains unknown.
 
 --refresh first pulls current readings from the providers over the network,
 all in parallel with a time limit each. A pull that fails or times out keeps
@@ -353,10 +354,32 @@ fn build_report(
         }
     }
 
+    if shown.len() > EXPORT_LIMIT
+        || shown
+            .iter()
+            .any(|(s, _)| s.quotas.len() > EXPORT_LIMIT || s.value_metrics.len() > EXPORT_LIMIT)
+    {
+        return Err(PaceError::Query { path: path.to_path_buf(), detail: format!("pace export exceeds {EXPORT_LIMIT} cards or {EXPORT_LIMIT} quotas/value metrics per card; nothing truncated") });
+    }
     let now = Utc::now();
     let mut rows = shown
         .into_iter()
-        .map(|(snapshot, outcome)| build_row(snapshot, now, outcome))
+        .map(|(snapshot, outcome)| {
+            let current = match snapshot.provider_id.as_str() {
+                "claude" => crate::providers::claude::observed_account_identity(),
+                _ => None,
+            };
+            let matched = crate::providers::identity::cache_match(
+                current
+                    .as_deref()
+                    .map(crate::providers::CacheIdentity::Resolved)
+                    .unwrap_or(crate::providers::CacheIdentity::Unresolved),
+                snapshot.account_identity.as_ref(),
+            );
+            let mut row = build_row(snapshot, now, outcome);
+            row.cache_identity_match = matched;
+            row
+        })
         .collect::<Vec<_>>();
     sort_rows(&mut rows);
     let offline_notice = if rows.is_empty() {
@@ -437,7 +460,14 @@ fn refresh_readings(
             .iter()
             .position(|(snapshot, _)| snapshot.provider_id == provider_id);
         let reason = match result {
+            live::PullResult::Fresh(snapshot)
+                if snapshot.quotas.len() > EXPORT_LIMIT
+                    || snapshot.value_metrics.len() > EXPORT_LIMIT =>
+            {
+                format!("refresh exceeds pace quota/value metric limit {EXPORT_LIMIT}; nothing truncated")
+            }
             live::PullResult::Fresh(snapshot) => {
+                let snapshot = crate::providers::cache::cloud_facts(*snapshot);
                 fresh.push(snapshot.clone());
                 match index {
                     Some(index) => shown[index] = (snapshot, RefreshOutcome::Live),
@@ -605,9 +635,20 @@ fn load_snapshots(connection: &Connection, path: &Path) -> Result<StoredSnapshot
             path: path.to_path_buf(),
         });
     }
+    let has_identity = connection
+        .prepare("PRAGMA table_info(provider_snapshots)")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(query_error)?
+        .iter()
+        .any(|column| column == "identity_key");
+    let identity_column = if has_identity { "identity_key" } else { "NULL" };
     let mut statement = connection
         .prepare(&format!(
-            "SELECT provider_id, payload FROM {SNAPSHOT_TABLE} ORDER BY provider_id"
+            "SELECT provider_id, payload, {identity_column} FROM {SNAPSHOT_TABLE} ORDER BY provider_id"
         ))
         .map_err(query_error)?;
     let mut stored = StoredSnapshots::default();
@@ -621,7 +662,25 @@ fn load_snapshots(connection: &Connection, path: &Path) -> Result<StoredSnapshot
             continue;
         };
         match serde_json::from_str::<ProviderSnapshot>(&payload) {
-            Ok(snapshot) => stored.snapshots.push(snapshot),
+            Ok(snapshot)
+                if snapshot.quotas.len() > EXPORT_LIMIT
+                    || snapshot.value_metrics.len() > EXPORT_LIMIT =>
+            {
+                stored.skipped.push(format!("Skipping snapshot for {provider_id}: quota/value metric count {}/{} exceeds pace limit {EXPORT_LIMIT}/{EXPORT_LIMIT}; nothing truncated.", snapshot.quotas.len(), snapshot.value_metrics.len()));
+            }
+            Ok(mut snapshot) if snapshot.provider_id == provider_id => {
+                if snapshot.account_identity.is_none() {
+                    let identity: Option<String> = entry.get(2).unwrap_or(None);
+                    snapshot.account_identity =
+                        crate::providers::identity::account_fact(&provider_id, identity.as_deref());
+                }
+                stored
+                    .snapshots
+                    .push(crate::providers::cache::cloud_facts(snapshot))
+            }
+            Ok(_) => stored.skipped.push(format!(
+                "Skipping snapshot for {provider_id}: payload belongs to another provider."
+            )),
             Err(error) => stored.skipped.push(format!(
                 "Skipping snapshot for {provider_id}: payload could not be parsed ({error})."
             )),
@@ -866,6 +925,7 @@ mod tests {
             format: QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -883,6 +943,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 
@@ -1041,6 +1103,12 @@ mod tests {
         assert_eq!(
             value,
             serde_json::json!({
+                "quotas": serde_json::to_value(&row.quotas).unwrap(),
+                "valueMetrics": [], "statusMetrics": [], "notices": [], "warnings": [],
+                "accountIdentity": null, "sharedScope": null, "cacheIdentityMatch": "unknown",
+                "remembered": false, "lastAttemptAt": null, "errorKind": null,
+                "refreshOutcome": "notRequested", "dataQuality": "cache",
+                "quotaCount": 2, "quotaLimit": 64, "valueMetricCount": 0, "valueMetricLimit": 64,
                 "providerId": "codex",
                 "plan": "Plus",
                 "windowId": "weekly",

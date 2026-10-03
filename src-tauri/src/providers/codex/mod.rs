@@ -255,6 +255,8 @@ impl CodexProvider {
             warnings,
             refreshed_at: now,
             remembered: false,
+            account_identity: crate::providers::identity::account_fact("codex", account_identity),
+            shared_scope: None,
         })
     }
 
@@ -346,6 +348,10 @@ impl crate::providers::UsageProvider for CodexProvider {
         true
     }
 
+    fn current_account_identity(&self) -> Option<String> {
+        observed_account_identity()
+    }
+
     fn account_identity(&self) -> Option<&str> {
         self.account_identity.as_deref()
     }
@@ -414,4 +420,8 @@ mod account_tests {
             CacheIdentity::Unresolved
         );
     }
+}
+
+pub(crate) fn observed_account_identity() -> Option<String> {
+    CodexAuthState::observed_account_identity().map(|identity| account_identity_key(&identity))
 }

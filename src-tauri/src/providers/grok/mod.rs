@@ -160,6 +160,8 @@ impl GrokProvider {
             warnings,
             refreshed_at: now,
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         })
     }
 

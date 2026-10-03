@@ -169,6 +169,8 @@ mod tests {
                 warnings: Vec::new(),
                 refreshed_at: Utc::now(),
                 remembered: false,
+                account_identity: None,
+                shared_scope: None,
             }),
             error: Some("The latest refresh failed.".into()),
             ..ProviderViewState::default()

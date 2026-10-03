@@ -70,12 +70,13 @@ pub fn parse_quota_summary(value: &Value) -> Option<Vec<QuotaWindow>> {
                 Some(QuotaWindow {
                     id: (*quota_id).into(),
                     label: (*label).into(),
-                    used_percent: ((1.0 - remaining.clamp(0.0, 1.0)) * 100.0).round(),
+                    used_percent: (1.0 - remaining.clamp(0.0, 1.0)) * 100.0,
                     resets_at: *resets_at,
                     period_seconds: *period_seconds,
                     format: QuotaFormat::Percent,
                     used_value: None,
                     limit_value: None,
+                    remaining_value: None,
                     unit: None,
                     estimated: false,
                     source_note: None,
@@ -205,12 +206,13 @@ pub fn build_legacy_quotas(configs: Vec<ModelConfig>) -> Vec<QuotaWindow> {
         Some(QuotaWindow {
             id: id.into(),
             label: label.into(),
-            used_percent: ((1.0 - remaining.clamp(0.0, 1.0)) * 100.0).round(),
+            used_percent: (1.0 - remaining.clamp(0.0, 1.0)) * 100.0,
             resets_at,
             period_seconds: 5 * 60 * 60,
             format: QuotaFormat::Percent,
             used_value: None,
             limit_value: None,
+            remaining_value: None,
             unit: None,
             estimated: false,
             source_note: None,
@@ -290,7 +292,7 @@ mod tests {
         let quotas = parse_quota_summary(&value).unwrap();
         assert_eq!(quotas.len(), 2);
         assert_eq!(quotas[0].id, "geminiPro");
-        assert_eq!(quotas[0].used_percent, 20.0);
+        assert!((quotas[0].used_percent - 20.0).abs() < 1e-12);
         assert_eq!(quotas[1].id, "claudeWeekly");
     }
 
@@ -314,8 +316,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["geminiPro", "claude"]
         );
-        assert_eq!(quotas[0].used_percent, 50.0);
-        assert_eq!(quotas[1].used_percent, 30.0);
+        assert!((quotas[0].used_percent - 50.0).abs() < 1e-12);
+        assert!((quotas[1].used_percent - 30.0).abs() < 1e-12);
     }
 
     #[test]
@@ -335,7 +337,7 @@ mod tests {
         }});
         let quotas = build_legacy_quotas(parse_cloud_models(&cloud));
         assert_eq!(quotas.len(), 1);
-        assert_eq!(quotas[0].used_percent, 60.0);
+        assert!((quotas[0].used_percent - 60.0).abs() < 1e-12);
 
         let buckets = json!({"buckets": [
             {"modelId": "gemini-3-pro", "remainingFraction": 0.5},
@@ -343,6 +345,6 @@ mod tests {
         ]});
         let quotas = build_legacy_quotas(parse_quota_buckets(&buckets));
         assert_eq!(quotas[0].id, "geminiPro");
-        assert_eq!(quotas[0].used_percent, 50.0);
+        assert!((quotas[0].used_percent - 50.0).abs() < 1e-12);
     }
 }

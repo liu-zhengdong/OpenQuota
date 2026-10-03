@@ -387,6 +387,8 @@ fn snapshot(
         warnings,
         refreshed_at,
         remembered: false,
+        account_identity: None,
+        shared_scope: None,
     }
 }
 

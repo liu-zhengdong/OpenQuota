@@ -135,6 +135,7 @@ fn quota(
         format: QuotaFormat::Percent,
         used_value: None,
         limit_value: None,
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,

@@ -7,11 +7,32 @@ use crate::{
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 
+/// Bound each exported collection; overflow is reported, never truncated.
+pub(super) const EXPORT_LIMIT: usize = 64;
+
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct PaceRow {
     pub(super) provider_id: String,
     pub(super) plan: Option<String>,
+    pub(super) quotas: Vec<QuotaWindow>,
+    pub(super) value_metrics: Vec<crate::models::ValueMetric>,
+    pub(super) status_metrics: Vec<crate::models::StatusMetric>,
+    pub(super) notices: Vec<crate::models::ProviderNotice>,
+    pub(super) warnings: Vec<crate::models::ProviderMessage>,
+    pub(super) account_identity: Option<crate::models::AccountIdentity>,
+    pub(super) shared_scope: Option<crate::models::SharedScope>,
+    pub(super) remembered: bool,
+    pub(super) last_attempt_at: Option<DateTime<Utc>>,
+    pub(super) error_kind: Option<crate::models::ProviderErrorKind>,
+    pub(super) cache_identity_match: crate::providers::identity::CacheIdentityMatch,
+    pub(super) refresh_outcome: String,
+    pub(super) quota_count: usize,
+    pub(super) quota_limit: usize,
+    pub(super) value_metric_count: usize,
+    pub(super) value_metric_limit: usize,
+    pub(super) data_quality: String,
+
     pub(super) window_id: Option<String>,
     pub(super) window_label: Option<String>,
     pub(super) used_percent: Option<f64>,
@@ -37,11 +58,42 @@ pub(super) fn build_row(
     let comparison = comparison_window(&snapshot.quotas);
     let short = short_window(&snapshot.quotas);
     PaceRow {
+        quota_count: snapshot.quotas.len(),
+        quota_limit: EXPORT_LIMIT,
+        value_metric_count: snapshot.value_metrics.len(),
+        value_metric_limit: EXPORT_LIMIT,
+        data_quality: if outcome == RefreshOutcome::Failed {
+            "refreshFailed"
+        } else if snapshot.quotas.is_empty() && snapshot.value_metrics.is_empty() {
+            "empty"
+        } else if snapshot.remembered {
+            "remembered"
+        } else if freshness::is_stale(outcome, snapshot.refreshed_at, now) {
+            "stale"
+        } else if outcome == RefreshOutcome::Live {
+            "live"
+        } else {
+            "cache"
+        }
+        .into(),
+        account_identity: snapshot.account_identity,
+        shared_scope: snapshot.shared_scope,
+        remembered: snapshot.remembered,
+        last_attempt_at: None,
+        error_kind: None,
+        cache_identity_match: Default::default(),
+        refresh_outcome: match outcome {
+            RefreshOutcome::Failed => "failed",
+            RefreshOutcome::Live => "live",
+            RefreshOutcome::Reused => "reused",
+            RefreshOutcome::NotRequested => "notRequested",
+        }
+        .into(),
         provider_id: snapshot.provider_id,
         plan: snapshot.plan,
         window_id: comparison.map(|window| window.id.clone()),
         window_label: comparison.map(|window| window.label.clone()),
-        used_percent: comparison.map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
+        used_percent: comparison.map(|window| window.used_percent),
         period_elapsed_percent: comparison
             .and_then(|window| pacing::period_elapsed_percent(window, now))
             .map(round1),
@@ -52,14 +104,18 @@ pub(super) fn build_row(
             .and_then(|window| window.resets_at)
             .map(|reset| round1(hours_between(now, reset))),
         short_window_id: short.map(|window| window.id.clone()),
-        short_window_used_percent: short
-            .map(|window| round1(window.used_percent.clamp(0.0, 100.0))),
+        short_window_used_percent: short.map(|window| window.used_percent),
         refreshed_at: snapshot
             .refreshed_at
-            .to_rfc3339_opts(SecondsFormat::Secs, true),
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true),
         refreshed_hours_ago: round1(hours_between(snapshot.refreshed_at, now).max(0.0)),
         stale: freshness::is_stale(outcome, snapshot.refreshed_at, now),
         outcome,
+        quotas: snapshot.quotas,
+        value_metrics: snapshot.value_metrics,
+        status_metrics: snapshot.status_metrics,
+        notices: snapshot.notices,
+        warnings: snapshot.warnings,
     }
 }
 

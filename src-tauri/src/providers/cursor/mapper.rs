@@ -153,6 +153,18 @@ pub fn map_live_usage(
             period_seconds,
         ));
     }
+    if let Some(total) = quotas.first_mut() {
+        total.used_value = plan_usage
+            .get("totalSpend")
+            .and_then(number)
+            .map(|n| n / 100.0);
+        total.limit_value = facts.limit.map(|n| n / 100.0);
+        total.remaining_value = plan_usage
+            .get("remaining")
+            .and_then(number)
+            .map(|n| n / 100.0);
+        total.unit = Some("USD".into());
+    }
     if let Some(used) = plan_usage.get("autoPercentUsed").and_then(number) {
         quotas.push(percent_quota(
             "auto",
@@ -509,6 +521,7 @@ fn quota(
         format,
         used_value: Some(used),
         limit_value: Some(limit),
+        remaining_value: None,
         unit: (format == QuotaFormat::Count).then(|| "requests".into()),
         estimated: false,
         source_note: None,
@@ -531,6 +544,7 @@ fn percent_quota(
         format: QuotaFormat::Percent,
         used_value: None,
         limit_value: None,
+        remaining_value: None,
         unit: None,
         estimated: false,
         source_note: None,
@@ -641,6 +655,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn percent_plan_keeps_source_dollars_and_remaining_without_inventing_used() {
+        let mapped = map_live_usage(
+            &json!({
+                "enabled":true,
+                "planUsage":{"limit":10000,"remaining":0,"totalPercentUsed":25.123456789}
+            }),
+            Some("pro"),
+            None,
+            0.0,
+        )
+        .unwrap();
+        let window = &mapped.quotas[0];
+        assert_eq!(window.used_percent, 25.123456789);
+        assert_eq!(window.used_value, None);
+        assert_eq!(window.limit_value, Some(100.0));
+        assert_eq!(window.remaining_value, Some(0.0));
+        assert_eq!(window.unit.as_deref(), Some("USD"));
+    }
 
     #[test]
     fn live_mapper_preserves_positive_spend_and_combines_credits() {

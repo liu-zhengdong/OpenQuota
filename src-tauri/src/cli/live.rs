@@ -52,7 +52,7 @@ pub fn is_pullable(provider_id: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PullResult {
-    Fresh(ProviderSnapshot),
+    Fresh(Box<ProviderSnapshot>),
     Failed(String),
     TimedOut,
 }
@@ -147,7 +147,7 @@ pub fn pull_all(
                         Ok(Ok(snapshot)) if snapshot.remembered => PullResult::Failed(
                             "the provider only returned its last remembered reading".into(),
                         ),
-                        Ok(Ok(snapshot)) => PullResult::Fresh(snapshot),
+                        Ok(Ok(snapshot)) => PullResult::Fresh(Box::new(snapshot)),
                         Ok(Err(message)) => PullResult::Failed(message),
                         Err(_) => PullResult::Failed("the refresh stopped unexpectedly".into()),
                     };
@@ -205,7 +205,13 @@ pub fn load_cache(path: &Path) -> Result<Vec<ProviderSnapshot>, String> {
         Err(error) => return Err(error.to_string()),
     };
     serde_json::from_str::<CacheFile>(&text)
-        .map(|cache| cache.snapshots)
+        .map(|cache| {
+            cache
+                .snapshots
+                .into_iter()
+                .map(crate::providers::cache::cloud_facts)
+                .collect()
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -265,6 +271,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: Utc.timestamp_opt(1_800_000_000, 0).unwrap(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         }
     }
 
@@ -296,6 +304,8 @@ mod tests {
             "zai" => Ok(reading("kimi", "wrong provider")),
             _ => Ok(ProviderSnapshot {
                 remembered: true,
+                account_identity: None,
+                shared_scope: None,
                 ..reading(provider_id, "remembered")
             }),
         });
@@ -311,7 +321,7 @@ mod tests {
             [
                 (
                     "cursor".to_owned(),
-                    PullResult::Fresh(reading("cursor", "fresh"))
+                    PullResult::Fresh(Box::new(reading("cursor", "fresh")))
                 ),
                 (
                     "grok".to_owned(),

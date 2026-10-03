@@ -2155,6 +2155,8 @@ mod tests {
             warnings: Vec::new(),
             refreshed_at: chrono::Utc::now(),
             remembered: false,
+            account_identity: None,
+            shared_scope: None,
         };
         storage.save_snapshot(&snapshot).unwrap();
         let service = SettingsService::new_for_test(

@@ -7,6 +7,7 @@ export interface QuotaWindow {
   format: 'percent' | 'dollars' | 'count';
   usedValue: number | null;
   limitValue: number | null;
+  remainingValue?: number | null;
   unit?: string | null;
   estimated: boolean;
   sourceNote?: string | null;
@@ -61,6 +62,18 @@ export interface ProviderWarning {
   fallback: string;
 }
 
+export interface AccountIdentity {
+  kind: 'accountHash';
+  value: string;
+  source: string;
+}
+
+export interface SharedScope {
+  id: string;
+  source: string;
+  windowIds: string[];
+}
+
 export interface ProviderSnapshot {
   providerId: string;
   plan: string | null;
@@ -72,6 +85,8 @@ export interface ProviderSnapshot {
   refreshedAt: string;
   /** No live read produced these numbers, so they must not be presented as current. */
   remembered?: boolean;
+  accountIdentity?: AccountIdentity | null;
+  sharedScope?: SharedScope | null;
 }
 
 export type ProviderErrorKind =
@@ -92,6 +107,7 @@ export interface ProviderViewState {
   error: string | null;
   errorKind: ProviderErrorKind | null;
   lastAttemptAt: string | null;
+  cacheIdentityMatch?: 'matched' | 'mismatched' | 'unknown';
 }
 
 export interface UsageViewState {

@@ -10,7 +10,6 @@ pub struct CommandCodeClient {
 pub struct UsageData {
     pub credits: Value,
     pub subscription: Value,
-    pub summary: Value,
 }
 impl CommandCodeClient {
     pub fn new() -> Result<Self, CommandCodeError> {
@@ -68,7 +67,7 @@ impl CommandCodeClient {
             return Err(CommandCodeError::InvalidResponse);
         }
         let org_query: Vec<_> = org.map(|id| vec![("orgId", id)]).unwrap_or_default();
-        // Summary depends on the subscription's period start; only these two requests are independent.
+        // Both requests describe the same observed organization boundary.
         let (credits, subscription) = thread::scope(|scope| {
             let credits = scope.spawn(|| self.get(key, "/alpha/billing/credits", &org_query));
             let subscription = self.get(key, "/alpha/billing/subscriptions", &org_query);
@@ -77,18 +76,9 @@ impl CommandCodeClient {
                 .map_err(|_| CommandCodeError::InvalidResponse)?;
             Ok::<_, CommandCodeError>((credits?, subscription?))
         })?;
-        let mut query = org_query;
-        if let Some(since) = subscription
-            .pointer("/data/currentPeriodStart")
-            .and_then(Value::as_str)
-        {
-            query.push(("since", since));
-        }
-        let summary = self.get(key, "/alpha/usage/summary", &query)?;
         Ok(UsageData {
             credits,
             subscription,
-            summary,
         })
     }
 }
