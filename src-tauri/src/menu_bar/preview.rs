@@ -1,5 +1,5 @@
-//! Headless design sheet for the macOS menu bar styles. It renders the real compact and text
-//! strips onto mock light and dark menu bars without launching the app or touching the screen:
+//! Headless design sheet for the macOS menu bar styles. It renders the real compact, bars and text
+//! icons onto mock light and dark menu bars without launching the app or touching the screen:
 //!
 //! `cargo test --lib menu_bar::preview -- --ignored`
 //!
@@ -12,9 +12,9 @@ use fontdue::{Font, FontSettings};
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 
 use super::{
-    render_compact_strip, render_text_strip, CompactGroup, RenderedStrip, Rgb, TextGroup,
-    COMPACT_CAUTION_COLOR, COMPACT_CRITICAL_COLOR, COMPACT_HEALTHY_COLOR, COMPACT_UNBOUNDED_COLOR,
-    TEXT_HEIGHT,
+    render_bar_rgba, render_compact_strip, render_text_strip, CompactGroup, RenderedStrip, Rgb,
+    TextGroup, COMPACT_CAUTION_COLOR, COMPACT_CRITICAL_COLOR, COMPACT_HEALTHY_COLOR,
+    COMPACT_UNBOUNDED_COLOR, ICON_SIZE, MAX_BARS, TEXT_HEIGHT,
 };
 use crate::quota_tier::quota_tier;
 
@@ -27,8 +27,8 @@ const STRIP_CLOCK_GAP: f32 = 28.0;
 const CLOCK_TEXT: &str = "周一 14:51";
 const CLOCK_SIZE: f32 = 26.0;
 const MARGIN: f32 = 48.0;
-const TITLE_COLUMN: f32 = 330.0;
-const ROW_NAME_COLUMN: f32 = 170.0;
+const TITLE_COLUMN: f32 = 420.0;
+const ROW_NAME_COLUMN: f32 = 250.0;
 const COLUMN_GAP: f32 = 32.0;
 const ROW_GAP: f32 = 16.0;
 const SCENARIO_GAP: f32 = 40.0;
@@ -74,7 +74,18 @@ struct Scenario {
     providers: &'static [(&'static str, Reading)],
 }
 
-const SCENARIOS: [Scenario; 4] = [
+const SCENARIOS: [Scenario; 5] = [
+    Scenario {
+        title: "1 家",
+        providers: &[("codex", Reading::Left(0.45))],
+    },
+    Scenario {
+        title: "2 家",
+        providers: &[
+            ("claude", Reading::Left(0.82)),
+            ("codex", Reading::Left(0.45)),
+        ],
+    },
     Scenario {
         title: "3 家：绿 / 橙 / 红",
         providers: &[
@@ -84,19 +95,16 @@ const SCENARIOS: [Scenario; 4] = [
         ],
     },
     Scenario {
-        title: "含一家灰（只钉了金额）",
+        title: "4 家，含一家灰（只钉了金额）",
         providers: &[
             ("claude", Reading::Left(0.82)),
             ("codex", Reading::Left(0.45)),
+            ("cursor", Reading::Left(0.12)),
             ("openrouter", Reading::Unbounded("$4.20")),
         ],
     },
     Scenario {
-        title: "1 家",
-        providers: &[("codex", Reading::Left(0.45))],
-    },
-    Scenario {
-        title: "6 家",
+        title: "6 家（紧凑只画最紧的 4 家）",
         providers: &[
             ("claude", Reading::Left(0.82)),
             ("codex", Reading::Left(0.45)),
@@ -110,6 +118,7 @@ const SCENARIOS: [Scenario; 4] = [
 
 struct Styles {
     compact: RenderedStrip,
+    bars: RenderedStrip,
     text: RenderedStrip,
 }
 
@@ -122,14 +131,14 @@ fn render_menu_bar_design_sheet() {
     let rendered = SCENARIOS.iter().map(render_styles).collect::<Vec<_>>();
     let widest_strip = rendered
         .iter()
-        .flat_map(|styles| [styles.compact.width, styles.text.width])
+        .flat_map(|styles| [styles.compact.width, styles.bars.width, styles.text.width])
         .max()
         .unwrap_or(0) as f32;
     let clock_width = measure(&font, CLOCK_TEXT, CLOCK_SIZE);
     let bar_width = (BAR_PADDING * 2.0 + widest_strip + STRIP_CLOCK_GAP + clock_width).ceil();
 
     let header_height = 150.0;
-    let scenario_height = BAR_HEIGHT as f32 * 2.0 + ROW_GAP;
+    let scenario_height = BAR_HEIGHT as f32 * 3.0 + ROW_GAP * 2.0;
     let width = (MARGIN * 2.0 + TITLE_COLUMN + ROW_NAME_COLUMN + (bar_width + COLUMN_GAP) * 2.0
         - COLUMN_GAP)
         .ceil();
@@ -144,7 +153,7 @@ fn render_menu_bar_design_sheet() {
     draw_label(
         &mut sheet,
         &font,
-        "菜单栏「紧凑」样式 · 无头渲染稿（@2x 实际像素）",
+        "菜单栏图标样式对比 · 无头渲染稿（@2x 实际像素，行名后为图标宽度）",
         30.0,
         MARGIN,
         MARGIN + 30.0,
@@ -178,15 +187,16 @@ fn render_menu_bar_design_sheet() {
             INK,
         );
         let rows = [
-            ("紧凑（新）", &styles.compact, false),
-            ("文字（现有）", &styles.text, true),
+            ("紧凑（默认）", &styles.compact, false),
+            ("条形", &styles.bars, true),
+            ("文字", &styles.text, true),
         ];
         for (row, (name, strip, is_template)) in rows.iter().enumerate() {
             let row_y = y + row as f32 * (BAR_HEIGHT as f32 + ROW_GAP);
             draw_label(
                 &mut sheet,
                 &font,
-                name,
+                &format!("{name} · {}px", strip.width),
                 22.0,
                 MARGIN + TITLE_COLUMN,
                 row_y + 32.0,
@@ -241,8 +251,21 @@ fn render_styles(scenario: &Scenario) -> Styles {
             }],
         })
         .collect::<Vec<_>>();
+    let fractions = scenario
+        .providers
+        .iter()
+        .filter_map(|(_, reading)| match reading {
+            Reading::Left(remaining) => Some(*remaining),
+            Reading::Unbounded(_) => None,
+        })
+        .take(MAX_BARS)
+        .collect::<Vec<_>>();
     Styles {
         compact: render_compact_strip(&compact).expect("scenarios have providers"),
+        bars: RenderedStrip {
+            rgba: render_bar_rgba(&fractions),
+            width: ICON_SIZE,
+        },
         text: render_text_strip(&text).expect("scenarios have values"),
     }
 }
