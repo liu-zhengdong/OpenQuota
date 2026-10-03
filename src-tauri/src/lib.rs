@@ -388,7 +388,7 @@ pub fn run() {
         });
     }));
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -401,9 +401,6 @@ pub fn run() {
         .manage(updates::UpdateCoordinator::default())
         .setup(|app| {
             logging::init(logging::default_log_path(), models::LogLevel::Info);
-
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             app.handle().plugin(tauri_plugin_positioner::init())?;
             let desktop_integration = DesktopIntegration::detect();
@@ -589,6 +586,16 @@ pub fn run() {
             updates::open_update_page
         ])
         .on_window_event(handle_window_event)
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running OpenQuota");
+    // The panel from tauri.conf.json is created before `setup` runs. macOS never places a window
+    // created while the app was still Regular on another app's fullscreen Space, even with
+    // CanJoinAllSpaces | FullScreenAuxiliary, so the policy must apply before the event loop starts.
+    #[cfg(target_os = "macos")]
+    let app = {
+        let mut app = app;
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        app
+    };
+    app.run(|_, _| {});
 }
