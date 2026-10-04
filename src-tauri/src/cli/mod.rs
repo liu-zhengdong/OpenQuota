@@ -72,7 +72,8 @@ of pulled again. Pulled readings are never written to the application database,
 so they cannot collide with the running app's writes; they go to pace-live.json
 next to it, which only this command reads and writes. As in the app, a pull may
 renew and save that provider's own expired login token. Claude and Codex keep
-account records in the application database, so only the app refreshes them.
+account records in the application database; Grok, Kimi and OpenCode use the
+app's magpie source. Only the app refreshes these five providers.
 
 The DATA column reads `live` for a reading pulled just now, `cached` for a
 recent read, and `stale` once the numbers are older than the panel's staleness
@@ -85,8 +86,8 @@ Options:
   --json               Print a stable JSON array instead of a text table
   --refresh            Pull current readings before printing
   --only <ids>         With --refresh, pull only these comma-separated providers:
-                       antigravity, copilot, cursor, devin, grok, kimi, minimax, commandcode,
-                       opencode, openrouter, zai
+                       antigravity, copilot, cursor, devin, minimax, commandcode,
+                       openrouter, zai
   --timeout <seconds>  With --refresh, time limit for each provider (default 20)
   --db <path>          Read this database file instead of the default (for testing)
   -h, --help           Show this help
@@ -1365,6 +1366,7 @@ mod tests {
             {"id": "cursor", "enabled": true, "detected": true, "expanded": false, "metrics": []},
             {"id": "grok", "enabled": true, "detected": true, "expanded": false, "metrics": []},
             {"id": "kimi", "enabled": true, "detected": true, "expanded": false, "metrics": []},
+            {"id": "minimax", "enabled": true, "detected": true, "expanded": false, "metrics": []},
             {"id": "antigravity", "enabled": true, "detected": false, "expanded": false, "metrics": []},
             {"id": "copilot", "enabled": false, "detected": true, "expanded": false, "metrics": []}
         ]
@@ -1382,6 +1384,7 @@ mod tests {
                 ("cursor", &aged("cursor", Duration::hours(5))),
                 ("grok", &aged("grok", Duration::hours(2))),
                 ("kimi", &aged("kimi", Duration::seconds(20))),
+                ("minimax", &aged("minimax", Duration::hours(2))),
             ],
         );
         store_settings(&path, PANEL_SETTINGS);
@@ -1428,7 +1431,7 @@ mod tests {
         let chosen = parse_options(&arguments(&[
             "--refresh",
             "--only",
-            " cursor,grok,,cursor ,kimi,antigravity",
+            " cursor,zai,,cursor ,commandcode,antigravity",
             "--timeout",
             "5",
         ]))
@@ -1436,7 +1439,7 @@ mod tests {
         assert_eq!(
             chosen.refresh,
             Some(RefreshOptions {
-                only: Some(arguments(&["cursor", "grok", "kimi", "antigravity"])),
+                only: Some(arguments(&["cursor", "zai", "commandcode", "antigravity"])),
                 timeout: std::time::Duration::from_secs(5),
             })
         );
@@ -1448,6 +1451,9 @@ mod tests {
             &["--refresh", "--only", ","],
             &["--refresh", "--only", "claude"],
             &["--refresh", "--only", "cursor,codex"],
+            &["--refresh", "--only", "grok"],
+            &["--refresh", "--only", "cursor,kimi"],
+            &["--refresh", "--only", "opencode"],
             &["--refresh", "--only", "nope"],
             &["--refresh", "--timeout", "0"],
             &["--refresh", "--timeout", "601"],
@@ -1491,7 +1497,9 @@ mod tests {
             .collect::<std::collections::HashSet<_>>();
         assert_eq!(
             providers,
-            ["claude", "cursor", "grok", "kimi"].into_iter().collect()
+            ["claude", "cursor", "grok", "kimi", "minimax"]
+                .into_iter()
+                .collect()
         );
         assert!(report.messages.is_empty(), "{:?}", report.messages);
         assert_eq!(report.offline_notice, None);
@@ -1544,7 +1552,7 @@ mod tests {
                         Ok(serde_json::from_str(&aged("cursor", Duration::zero())).unwrap())
                     }
                     "antigravity" => Err("Antigravity is not running.".into()),
-                    "grok" => {
+                    "minimax" => {
                         std::thread::sleep(std::time::Duration::from_secs(3));
                         Err("late".into())
                     }
@@ -1556,17 +1564,27 @@ mod tests {
         let refreshed = report(&path, &["--refresh", "--timeout", "1"], reader, Some(false));
         let mut pulled = calls.lock().unwrap().clone();
         pulled.sort();
-        assert_eq!(pulled, ["antigravity", "cursor", "grok"]);
+        assert_eq!(pulled, ["antigravity", "cursor", "minimax"]);
 
         let cursor = row(&refreshed, "cursor");
         assert_eq!(cursor.outcome, RefreshOutcome::Live);
         assert!(!cursor.stale);
         assert_eq!(cursor.refreshed_hours_ago, 0.0);
+        let minimax = row(&refreshed, "minimax");
+        assert_eq!(minimax.outcome, RefreshOutcome::Failed);
+        assert!(minimax.stale);
+        assert_eq!(minimax.refreshed_hours_ago, 2.0);
+        // grok and kimi are no longer pullable from the command line; their readings come
+        // from the application's magpie refreshes. A stale grok stays stale, a fresh kimi
+        // stays fresh, and neither is pulled nor counted as reused.
         let grok = row(&refreshed, "grok");
-        assert_eq!(grok.outcome, RefreshOutcome::Failed);
+        assert_eq!(grok.outcome, RefreshOutcome::NotRequested);
         assert!(grok.stale);
         assert_eq!(grok.refreshed_hours_ago, 2.0);
-        assert_eq!(row(&refreshed, "kimi").outcome, RefreshOutcome::Reused);
+        assert_eq!(
+            row(&refreshed, "kimi").outcome,
+            RefreshOutcome::NotRequested
+        );
         assert!(!row(&refreshed, "kimi").stale);
         assert_eq!(
             row(&refreshed, "claude").outcome,
@@ -1584,7 +1602,7 @@ mod tests {
             refreshed.messages,
             [
                 "antigravity: refresh failed (Antigravity is not running.); there is no earlier reading to show.",
-                "grok: refresh timed out after 1s; showing the reading from 2.0 hours ago, marked stale.",
+                "minimax: refresh timed out after 1s; showing the reading from 2.0 hours ago, marked stale.",
             ]
         );
         assert_eq!(
