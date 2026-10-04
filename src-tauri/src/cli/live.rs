@@ -22,26 +22,24 @@ use crate::{
     models::ProviderSnapshot,
     providers::{
         antigravity::AntigravityProvider, commandcode::CommandCodeProvider,
-        copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider, grok::GrokProvider,
-        kimi::KimiProvider, minimax::MiniMaxProvider, opencode::OpenCodeProvider,
-        openrouter::OpenRouterProvider, zai::ZaiProvider, UsageProvider,
+        copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider,
+        minimax::MiniMaxProvider, openrouter::OpenRouterProvider, zai::ZaiProvider,
+        UsageProvider,
     },
 };
 
 pub const CACHE_FILE_NAME: &str = "pace-live.json";
 
 /// Providers that can be pulled without the application database. Claude and Codex keep
-/// account records there, so only the application refreshes them.
-pub const PULLABLE_PROVIDERS: [&str; 11] = [
+/// account records there, and grok, kimi and opencode read through the app's magpie source,
+/// so only the application refreshes them.
+pub const PULLABLE_PROVIDERS: [&str; 8] = [
     "antigravity",
     "copilot",
     "cursor",
     "devin",
-    "grok",
-    "kimi",
     "minimax",
     "commandcode",
-    "opencode",
     "openrouter",
     "zai",
 ];
@@ -85,11 +83,8 @@ fn build_provider(
         "copilot" => boxed(CopilotProvider::new()),
         "cursor" => boxed(CursorProvider::new()),
         "devin" => boxed(DevinProvider::new()),
-        "grok" => boxed(GrokProvider::new()),
-        "kimi" => boxed(KimiProvider::new()),
         "minimax" => boxed(MiniMaxProvider::new()),
         "commandcode" => boxed(CommandCodeProvider::new()),
-        "opencode" => Ok(Box::new(OpenCodeProvider::new())),
         "openrouter" => boxed(OpenRouterProvider::new()),
         "zai" => boxed(ZaiProvider::new()),
         other => Err(format!("{other} cannot be refreshed from the command line")),
@@ -286,22 +281,28 @@ mod tests {
         }
         assert!(build_provider("claude", directory.path()).is_err());
         assert!(build_provider("codex", directory.path()).is_err());
+        assert!(build_provider("grok", directory.path()).is_err());
+        assert!(build_provider("kimi", directory.path()).is_err());
+        assert!(build_provider("opencode", directory.path()).is_err());
         assert!(!is_pullable("claude"));
         assert!(!is_pullable("claude@1234abcd"));
         assert!(!is_pullable("codex"));
+        assert!(!is_pullable("grok"));
+        assert!(!is_pullable("kimi"));
+        assert!(!is_pullable("opencode"));
     }
 
     #[test]
     fn slow_and_failing_providers_do_not_hold_back_the_others() {
         let reader: Reader = Arc::new(|provider_id| match provider_id {
             "cursor" => Ok(reading("cursor", "fresh")),
-            "grok" => Err("Could not reach Grok.".into()),
-            "kimi" => {
+            "openrouter" => Err("Could not reach OpenRouter.".into()),
+            "commandcode" => {
                 std::thread::sleep(Duration::from_secs(4));
-                Ok(reading("kimi", "late"))
+                Ok(reading("commandcode", "late"))
             }
             "devin" => panic!("devin broke"),
-            "zai" => Ok(reading("kimi", "wrong provider")),
+            "zai" => Ok(reading("minimax", "wrong provider")),
             _ => Ok(ProviderSnapshot {
                 remembered: true,
                 account_identity: None,
@@ -309,7 +310,7 @@ mod tests {
                 ..reading(provider_id, "remembered")
             }),
         });
-        let requested = ["cursor", "grok", "kimi", "zai", "antigravity", "devin"]
+        let requested = ["cursor", "openrouter", "commandcode", "zai", "antigravity", "devin"]
             .map(str::to_owned)
             .to_vec();
         let started = std::time::Instant::now();
@@ -324,10 +325,10 @@ mod tests {
                     PullResult::Fresh(Box::new(reading("cursor", "fresh")))
                 ),
                 (
-                    "grok".to_owned(),
-                    PullResult::Failed("Could not reach Grok.".into())
+                    "openrouter".to_owned(),
+                    PullResult::Failed("Could not reach OpenRouter.".into())
                 ),
-                ("kimi".to_owned(), PullResult::TimedOut),
+                ("commandcode".to_owned(), PullResult::TimedOut),
                 (
                     "zai".to_owned(),
                     PullResult::Failed(
@@ -375,7 +376,11 @@ mod tests {
         save_cache(
             &path,
             Vec::new(),
-            &[reading("cursor", "first"), reading("grok", "first")],
+            &[
+                reading("cursor", "first"),
+                reading("zai", "first"),
+                reading("grok", "no longer pullable"),
+            ],
         )
         .unwrap();
         save_cache(
@@ -386,9 +391,11 @@ mod tests {
         .unwrap();
 
         let cached = load_cache(&path).unwrap();
+        // zai stays because this pull did not cover it; grok is gone because it is no longer
+        // pullable and the command line reads it only through the application database.
         assert_eq!(
             cached,
-            [reading("cursor", "second"), reading("grok", "first")]
+            [reading("cursor", "second"), reading("zai", "first")]
         );
 
         std::fs::write(&path, "{not json").unwrap();
