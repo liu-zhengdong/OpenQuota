@@ -44,27 +44,6 @@ pub fn is_claude_account_provider_id(provider_id: &str) -> bool {
     })
 }
 
-pub fn remember_default_account(
-    storage: &crate::storage::Storage,
-    family: &str,
-    identity: &str,
-) -> Result<(), crate::storage::StorageError> {
-    let records = storage.load_provider_account_records(family)?;
-    if records
-        .iter()
-        .any(|(known_identity, provider_id, _)| known_identity == identity && provider_id == family)
-    {
-        return Ok(());
-    }
-    if records
-        .iter()
-        .any(|(known_identity, provider_id, _)| known_identity == identity || provider_id == family)
-    {
-        return Ok(());
-    }
-    storage.save_provider_account_record(family, identity, family, "{}")
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheIdentity<'a> {
     Unscoped,
@@ -175,25 +154,9 @@ pub trait UsageProvider: Send + Sync {
 mod tests {
     use super::{
         antigravity, claude, codex, copilot, cursor, devin, grok, kimi, minimax, opencode,
-        openrouter, remember_default_account, zai, ProviderError,
+        openrouter, zai, ProviderError,
     };
     use crate::models::ProviderErrorKind;
-    use tempfile::tempdir;
-
-    #[test]
-    fn remembered_default_account_is_stable_across_identity_changes() {
-        let directory = tempdir().unwrap();
-        let storage =
-            crate::storage::Storage::open(&directory.path().join("openquota.db")).unwrap();
-
-        remember_default_account(&storage, "codex", "identity-a").unwrap();
-        remember_default_account(&storage, "codex", "identity-b").unwrap();
-
-        assert_eq!(
-            storage.load_provider_account_records("codex").unwrap(),
-            [("identity-a".into(), "codex".into(), "{}".into())]
-        );
-    }
 
     #[test]
     fn provider_errors_expose_only_the_safe_message() {
