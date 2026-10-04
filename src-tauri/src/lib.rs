@@ -55,7 +55,7 @@ use crate::{
         antigravity::AntigravityProvider, claude, codex::reset_claim::CodexResetClaimService,
         commandcode::CommandCodeProvider, copilot::CopilotProvider, cursor::CursorProvider,
         detect_local_credentials, devin::DevinProvider, minimax::MiniMaxProvider,
-        openrouter::OpenRouterProvider, ProviderRegistry, UsageProvider,
+        openrouter::OpenRouterProvider, zai::ZaiProvider, ProviderRegistry, UsageProvider,
     },
     storage::Storage,
     window::{
@@ -439,7 +439,7 @@ pub fn run() {
                 magpie.runtime(providers::grok::definition()),
                 magpie.runtime(providers::opencode::definition()),
                 Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
-                magpie.runtime(providers::zai::definition()),
+                Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
                 magpie.runtime(providers::kimi::definition()),
                 Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(CommandCodeProvider::new()?) as Arc<dyn UsageProvider>,
