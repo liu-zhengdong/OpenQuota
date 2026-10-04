@@ -6,6 +6,7 @@ mod hashing;
 mod i18n;
 mod instance_lock;
 mod logging;
+mod magpie;
 #[cfg(any(target_os = "macos", test))]
 mod menu_bar;
 mod models;
@@ -52,10 +53,9 @@ use crate::{
     pacing::NotificationEvaluator,
     providers::{
         antigravity::AntigravityProvider, claude, codex::reset_claim::CodexResetClaimService,
-        codex::CodexProvider, commandcode::CommandCodeProvider, copilot::CopilotProvider,
-        cursor::CursorProvider, detect_local_credentials, devin::DevinProvider, grok::GrokProvider,
-        kimi::KimiProvider, minimax::MiniMaxProvider, opencode::OpenCodeProvider,
-        openrouter::OpenRouterProvider, zai::ZaiProvider, ProviderRegistry, UsageProvider,
+        commandcode::CommandCodeProvider, copilot::CopilotProvider, cursor::CursorProvider,
+        detect_local_credentials, devin::DevinProvider, minimax::MiniMaxProvider,
+        openrouter::OpenRouterProvider, ProviderRegistry, UsageProvider,
     },
     storage::Storage,
     window::{
@@ -427,19 +427,20 @@ pub fn run() {
             app.manage(Arc::new(PanelResizeSession::new(storage.clone())));
             app_debug!("cache", "application database opened");
             let mut providers = claude::runtimes(storage.clone())?;
+            let magpie = magpie::Source::from_environment()?;
             providers.extend(vec![
-                Arc::new(CodexProvider::new(storage.clone())?) as Arc<dyn UsageProvider>,
+                magpie.runtime(providers::codex::definition()),
                 Arc::new(CursorProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(AntigravityProvider::new(
                     app_data_dir.join("antigravity").join("auth.json"),
                 )?) as Arc<dyn UsageProvider>,
                 Arc::new(CopilotProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(DevinProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(GrokProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(OpenCodeProvider::new()) as Arc<dyn UsageProvider>,
+                magpie.runtime(providers::grok::definition()),
+                magpie.runtime(providers::opencode::definition()),
                 Arc::new(OpenRouterProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(ZaiProvider::new()?) as Arc<dyn UsageProvider>,
-                Arc::new(KimiProvider::new()?) as Arc<dyn UsageProvider>,
+                magpie.runtime(providers::zai::definition()),
+                magpie.runtime(providers::kimi::definition()),
                 Arc::new(MiniMaxProvider::new()?) as Arc<dyn UsageProvider>,
                 Arc::new(CommandCodeProvider::new()?) as Arc<dyn UsageProvider>,
             ]);

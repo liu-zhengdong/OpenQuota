@@ -1059,3 +1059,37 @@ mod tests {
         .is_empty());
     }
 }
+
+#[cfg(test)]
+mod magpie_display_tests {
+    use super::*;
+    #[test]
+    fn magpie_windows_use_existing_menu_bar_formatter() {
+        for snapshot in crate::magpie::sample_snapshots() {
+            for quota in &snapshot.quotas {
+                let metric = crate::models::MetricDefinition::quota(
+                    &format!("{}.{}", snapshot.provider_id, quota.id),
+                    &quota.label,
+                    &quota.id,
+                    false,
+                    true,
+                    crate::models::MetricSection::AlwaysVisible,
+                    false,
+                    &quota.label,
+                );
+                for display in [UsageDisplay::Used, UsageDisplay::Left] {
+                    let shown = tray_metric(&metric, &snapshot, display).unwrap();
+                    let expected = match display {
+                        UsageDisplay::Used => quota.used_percent / 100.0,
+                        UsageDisplay::Left => 1.0 - quota.used_percent / 100.0,
+                    };
+                    assert_eq!(shown.gauge.unwrap().display_fraction, expected);
+                    println!(
+                        "{}/{} {:?}: {}",
+                        snapshot.provider_id, quota.label, display, shown.value
+                    );
+                }
+            }
+        }
+    }
+}
