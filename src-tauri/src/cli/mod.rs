@@ -1580,7 +1580,10 @@ mod tests {
         assert_eq!(grok.outcome, RefreshOutcome::NotRequested);
         assert!(grok.stale);
         assert_eq!(grok.refreshed_hours_ago, 2.0);
-        assert_eq!(row(&refreshed, "kimi").outcome, RefreshOutcome::NotRequested);
+        assert_eq!(
+            row(&refreshed, "kimi").outcome,
+            RefreshOutcome::NotRequested
+        );
         assert!(!row(&refreshed, "kimi").stale);
         assert_eq!(
             row(&refreshed, "claude").outcome,

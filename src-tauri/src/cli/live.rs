@@ -23,8 +23,7 @@ use crate::{
     providers::{
         antigravity::AntigravityProvider, commandcode::CommandCodeProvider,
         copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider,
-        minimax::MiniMaxProvider, openrouter::OpenRouterProvider, zai::ZaiProvider,
-        UsageProvider,
+        minimax::MiniMaxProvider, openrouter::OpenRouterProvider, zai::ZaiProvider, UsageProvider,
     },
 };
 
@@ -310,9 +309,16 @@ mod tests {
                 ..reading(provider_id, "remembered")
             }),
         });
-        let requested = ["cursor", "openrouter", "commandcode", "zai", "antigravity", "devin"]
-            .map(str::to_owned)
-            .to_vec();
+        let requested = [
+            "cursor",
+            "openrouter",
+            "commandcode",
+            "zai",
+            "antigravity",
+            "devin",
+        ]
+        .map(str::to_owned)
+        .to_vec();
         let started = std::time::Instant::now();
         let (results, late) = pull_all(&requested, Duration::from_secs(1), reader);
         assert!(started.elapsed() < Duration::from_secs(3));
