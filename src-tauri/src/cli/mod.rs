@@ -72,7 +72,8 @@ of pulled again. Pulled readings are never written to the application database,
 so they cannot collide with the running app's writes; they go to pace-live.json
 next to it, which only this command reads and writes. As in the app, a pull may
 renew and save that provider's own expired login token. Claude and Codex keep
-account records in the application database, so only the app refreshes them.
+account records in the application database; Grok, Kimi and OpenCode use the
+app's magpie source. Only the app refreshes these five providers.
 
 The DATA column reads `live` for a reading pulled just now, `cached` for a
 recent read, and `stale` once the numbers are older than the panel's staleness
