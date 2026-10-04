@@ -205,14 +205,16 @@ jobs:
               echo "Release $RELEASE_TAG already exists and is not a draft." >&2
               exit 1
             }
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes-file "docs/release-notes/$RELEASE_TAG.md"
           else
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --verify-tag \
               --title "OpenQuota ${RELEASE_TAG#v}" \
-              --generate-notes \
-              --notes $'OpenQuota desktop release for Windows and Linux on x64/ARM64, plus a macOS Universal build.\n\nAutomatic updates are cryptographically signed. Linux in-app updates are supported by AppImage builds; Debian packages update through the package installer.'
+              --notes-file "docs/release-notes/$RELEASE_TAG.md"
           fi
 
           release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq '.databaseId')"
@@ -462,6 +464,9 @@ jobs:
             echo "Draft release not found for $RELEASE_TAG" >&2
             exit 1
           }
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes-file "docs/release-notes/$RELEASE_TAG.md"
           gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             > release-check/release.json
           jq -r '.assets[]
