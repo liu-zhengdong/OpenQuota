@@ -74,24 +74,10 @@ const runtimeBlock = compositionRoot.match(/providers\.extend\(vec!\[([\s\S]*?)\
 if (!runtimeBlock) {
   throw new Error('Tauri setup does not expose the provider runtime list.');
 }
-const magpieProviderNames = {
-  codex: 'CodexProvider',
-  grok: 'GrokProvider',
-  kimi: 'KimiProvider',
-  zai: 'ZaiProvider',
-  opencode: 'OpenCodeProvider',
-};
 const runtimeOrder = [
   'ClaudeProvider',
-  ...[
-    ...runtimeBlock.matchAll(
-      /Arc::new\((\w+Provider)::new\b|magpie\.runtime\(providers::(\w+)::definition\(\)\)/g,
-    ),
-  ].map(([, direct, family]) => direct ?? magpieProviderNames[family]),
+  ...[...runtimeBlock.matchAll(/Arc::new\((\w+Provider)::new\b/g)].map(([, provider]) => provider),
 ];
-if (!/let magpie = magpie::Source::from_environment\(\)\?;/.test(compositionRoot)) {
-  throw new Error('Tauri setup must share one magpie source.');
-}
 const expectedRuntimeOrder = [
   'ClaudeProvider',
   'CodexProvider',
