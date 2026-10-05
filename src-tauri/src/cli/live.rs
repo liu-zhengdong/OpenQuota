@@ -21,24 +21,28 @@ use tempfile::NamedTempFile;
 use crate::{
     models::ProviderSnapshot,
     providers::{
-        antigravity::AntigravityProvider, commandcode::CommandCodeProvider,
-        copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider,
-        minimax::MiniMaxProvider, openrouter::OpenRouterProvider, zai::ZaiProvider, UsageProvider,
+        antigravity::AntigravityProvider, codex::CodexProvider, commandcode::CommandCodeProvider,
+        copilot::CopilotProvider, cursor::CursorProvider, devin::DevinProvider, grok::GrokProvider,
+        kimi::KimiProvider, minimax::MiniMaxProvider, opencode::OpenCodeProvider,
+        openrouter::OpenRouterProvider, zai::ZaiProvider, UsageProvider,
     },
 };
 
 pub const CACHE_FILE_NAME: &str = "pace-live.json";
 
-/// Providers that can be pulled without the application database. Claude and Codex keep
-/// account records there, and grok, kimi and opencode read through the app's magpie source,
-/// so only the application refreshes them.
-pub const PULLABLE_PROVIDERS: [&str; 8] = [
+/// Providers that can be pulled without the application database. Claude keeps
+/// account records there, so only the application refreshes it.
+pub const PULLABLE_PROVIDERS: [&str; 12] = [
     "antigravity",
+    "codex",
     "copilot",
     "cursor",
     "devin",
+    "grok",
+    "kimi",
     "minimax",
     "commandcode",
+    "opencode",
     "openrouter",
     "zai",
 ];
@@ -79,11 +83,15 @@ fn build_provider(
         "antigravity" => boxed(AntigravityProvider::new(
             data_directory.join("antigravity").join("auth.json"),
         )),
+        "codex" => boxed(CodexProvider::from_local_credentials()),
         "copilot" => boxed(CopilotProvider::new()),
         "cursor" => boxed(CursorProvider::new()),
         "devin" => boxed(DevinProvider::new()),
+        "grok" => boxed(GrokProvider::new()),
+        "kimi" => boxed(KimiProvider::new()),
         "minimax" => boxed(MiniMaxProvider::new()),
         "commandcode" => boxed(CommandCodeProvider::new()),
+        "opencode" => Ok(Box::new(OpenCodeProvider::new())),
         "openrouter" => boxed(OpenRouterProvider::new()),
         "zai" => boxed(ZaiProvider::new()),
         other => Err(format!("{other} cannot be refreshed from the command line")),
@@ -279,29 +287,23 @@ mod tests {
             assert_eq!(provider.definition().id, provider_id);
         }
         assert!(build_provider("claude", directory.path()).is_err());
-        assert!(build_provider("codex", directory.path()).is_err());
-        assert!(build_provider("grok", directory.path()).is_err());
-        assert!(build_provider("kimi", directory.path()).is_err());
-        assert!(build_provider("opencode", directory.path()).is_err());
         assert!(!is_pullable("claude"));
         assert!(!is_pullable("claude@1234abcd"));
-        assert!(!is_pullable("codex"));
-        assert!(!is_pullable("grok"));
-        assert!(!is_pullable("kimi"));
-        assert!(!is_pullable("opencode"));
+        assert!(is_pullable("codex"));
+        assert!(!directory.path().join("openquota.db").exists());
     }
 
     #[test]
     fn slow_and_failing_providers_do_not_hold_back_the_others() {
         let reader: Reader = Arc::new(|provider_id| match provider_id {
             "cursor" => Ok(reading("cursor", "fresh")),
-            "openrouter" => Err("Could not reach OpenRouter.".into()),
-            "commandcode" => {
+            "grok" => Err("Could not reach Grok.".into()),
+            "kimi" => {
                 std::thread::sleep(Duration::from_secs(4));
-                Ok(reading("commandcode", "late"))
+                Ok(reading("kimi", "late"))
             }
             "devin" => panic!("devin broke"),
-            "zai" => Ok(reading("minimax", "wrong provider")),
+            "zai" => Ok(reading("kimi", "wrong provider")),
             _ => Ok(ProviderSnapshot {
                 remembered: true,
                 account_identity: None,
@@ -309,16 +311,9 @@ mod tests {
                 ..reading(provider_id, "remembered")
             }),
         });
-        let requested = [
-            "cursor",
-            "openrouter",
-            "commandcode",
-            "zai",
-            "antigravity",
-            "devin",
-        ]
-        .map(str::to_owned)
-        .to_vec();
+        let requested = ["cursor", "grok", "kimi", "zai", "antigravity", "devin"]
+            .map(str::to_owned)
+            .to_vec();
         let started = std::time::Instant::now();
         let (results, late) = pull_all(&requested, Duration::from_secs(1), reader);
         assert!(started.elapsed() < Duration::from_secs(3));
@@ -331,10 +326,10 @@ mod tests {
                     PullResult::Fresh(Box::new(reading("cursor", "fresh")))
                 ),
                 (
-                    "openrouter".to_owned(),
-                    PullResult::Failed("Could not reach OpenRouter.".into())
+                    "grok".to_owned(),
+                    PullResult::Failed("Could not reach Grok.".into())
                 ),
-                ("commandcode".to_owned(), PullResult::TimedOut),
+                ("kimi".to_owned(), PullResult::TimedOut),
                 (
                     "zai".to_owned(),
                     PullResult::Failed(
@@ -382,11 +377,7 @@ mod tests {
         save_cache(
             &path,
             Vec::new(),
-            &[
-                reading("cursor", "first"),
-                reading("zai", "first"),
-                reading("grok", "no longer pullable"),
-            ],
+            &[reading("cursor", "first"), reading("grok", "first")],
         )
         .unwrap();
         save_cache(
@@ -397,11 +388,9 @@ mod tests {
         .unwrap();
 
         let cached = load_cache(&path).unwrap();
-        // zai stays because this pull did not cover it; grok is gone because it is no longer
-        // pullable and the command line reads it only through the application database.
         assert_eq!(
             cached,
-            [reading("cursor", "second"), reading("zai", "first")]
+            [reading("cursor", "second"), reading("grok", "first")]
         );
 
         std::fs::write(&path, "{not json").unwrap();
